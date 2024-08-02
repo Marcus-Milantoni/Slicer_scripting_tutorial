@@ -1,4 +1,5 @@
 # Created by Edward Wang and Marcus Milantoni
+###~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~###
 
 import slicer, vtk
 from DICOMLib import DICOMUtils
@@ -9,16 +10,17 @@ import logging
 import matplotlib.pyplot as plt
 
 
-logger = logging.getLogger(slicer.app.applicationLogic().GetClassName())
+# Setup the logger (can customize)
+logger = logging.getLogger('Basic_functions_logger')
+logger.setLevel(logging.DEBUG) # Sets the log level to DEBUG by default
 handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s')) # Sets the format of the logger
 logger.addHandler(handler)
-logger.setLevel(logging.INFO)
 
 
 def load_DICOM(dicomDataDir):
     """
-    This function loads DICOM data into Slicer.
+    This function loads DICOM data into Slicer. This function uses DICOMutils to handle the data types.
 
     Parameters
     ----------
@@ -47,13 +49,13 @@ def load_DICOM(dicomDataDir):
         logger.exception(e)
 
 
-def getFullSizeSegmentation(segmentId):
+def get_segment_array(segmentID, segmentationNode=None, referenceVolumeNode=None):
     """
-    This function returns the full size segmentation from a segment ID.
+    This function returns the full size segmentation array from a given segment ID.
     
     Parameters
     ----------
-    segmentId : str
+    segmentID : str
                 The segment ID to get the full size segmentation from.
     
     Returns
@@ -61,14 +63,27 @@ def getFullSizeSegmentation(segmentId):
     numpy.ndarray
         The full size segmentation.
     """
-    segmentationNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentationNode")
-    referenceVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-    segarr = slicer.util.arrayFromSegmentBinaryLabelmap(segmentationNode, segmentId, referenceVolumeNode)
+    try:
+        if not isinstance(segmentId, str):
+            raise TypeError ("The variable segmentId must be a string.")
+        if not (isinstance(segmentationNode, vtkMRMLSegmentationNode) or isinstance(segmentationNode, None)):
+            raise TypeError ("The variable segmentationNode must be of type vtkMRMLSegmentationNode or None")
+        if not (isinstance(referenceVolumeNode, vtkMRMLVolumeNode) or isinstance(referenceVolumeNode, None)):
+            raise TypeError ("The variable referenceVolumeNode must be of typr vtkMRMLVolumeNode or None")
     
-    return segarr
+        if segementationNode is None:
+            segmentationNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentationNode")
+        if referenceVolumeNode is None:
+            referenceVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+        segmentArray = slicer.util.arrayFromSegmentBinaryLabelmap(segmentationNode, segmentId, referenceVolumeNode)
+    
+        return segmentArray
+        
+    except TypeError as e:
+        logger.error(f"A type error occured in get_segment_array \n{e}")  
 
 
-def createVolumeNode(doseVolume, referenceNode, volumeName):
+def create_volume_node(doseVolume, referenceNode, volumeName):
     """
     This function creates a volume node from a numpy array.
 
