@@ -1,5 +1,4 @@
-# Created by Edward Wang and Marcus Milantoni
-###~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~###
+# Created by Marcus Milantoni and Edward Wang. This script contains basic functions for image processing in Slicer.
 
 import slicer, vtk
 from DICOMLib import DICOMUtils
@@ -11,11 +10,8 @@ import matplotlib.pyplot as plt
 
 
 # Setup the logger (can customize)
-logger = logging.getLogger('Basic_functions_logger')
-logger.setLevel(logging.DEBUG) # Sets the log level to DEBUG by default
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s')) # Sets the format of the logger
-logger.addHandler(handler)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def load_DICOM(dicomDataDir):
@@ -29,24 +25,32 @@ def load_DICOM(dicomDataDir):
     
     Returns
     -------
-    None
+    list
+        The list of all loaded node IDs.
     """
-    try:
-        if isinstance(dicomDataDir, str) and os.path.isdir(dicomDataDir):
-            loadedNodeIDs = []  # this list will contain the list of all loaded node IDs
+    if not isinstance(dicomDataDir, str):
+        logger.error("The dicomDataDir parameter must be a string.")
+        raise TypeError("The dicomDataDir parameter must be a string.")
+    if not os.path.isdir(dicomDataDir):
+        logger.error("The dicomDataDir parameter must be a valid directory.")
+        raise ValueError("The dicomDataDir parameter must be a valid directory.")
 
-            with DICOMUtils.TemporaryDICOMDatabase() as db:
-                DICOMUtils.importDicom(dicomDataDir, db)
-                patientUIDs = db.patients()
-                for patientUID in patientUIDs:
-                    loadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))
-        else:
-            raise Exception ("The dicomDataDir parameter must be a string.")
+    try:
+        loadedNodeIDs = []  # this list will contain the list of all loaded node IDs
+
+        with DICOMUtils.TemporaryDICOMDatabase() as db:
+            logger.debug(f"Importing DICOM data from directory: {dicomDataDir}")
+            DICOMUtils.importDicom(dicomDataDir, db)
+            patientUIDs = db.patients()
+            for patientUID in patientUIDs:
+                logger.debug(f"Loading patient with UID: {patientUID}")
+                loadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))
 
         return loadedNodeIDs
 
-    except Exception as e:
-        logger.exception(e)
+    except Exception:
+        logger.exception("An error occurred in load_DICOM")
+        raise
 
 
 def get_segment_array(segmentID, segmentationNode=None, referenceVolumeNode=None):
@@ -58,38 +62,51 @@ def get_segment_array(segmentID, segmentationNode=None, referenceVolumeNode=None
     segmentID : str
                 The segment ID to get the full size segmentation from.
     
+    segmentationNode : vtkMRMLSegmentationNode, default: None
+                The segmentation node to get the segment from.
+    
+    referenceVolumeNode : vtkMRMLVolumeNode, default: None
+                The reference volume node to get the segment from.
+    
     Returns
     -------
     numpy.ndarray
-        The full size segmentation.
+        The full size segmentation array.
     """
+    if not isinstance(segmentID, str):
+        logger.error("The segmentID parameter must be a string.")
+        raise TypeError("The segmentID parameter must be a string.")
+    if segmentationNode is not None and not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+        logger.error("The segmentationNode parameter must be of type vtkMRMLSegmentationNode or None.")
+        raise TypeError("The segmentationNode parameter must be of type vtkMRMLSegmentationNode or None.")
+    if referenceVolumeNode is not None and not isinstance(referenceVolumeNode, slicer.vtkMRMLVolumeNode):
+        logger.error("The referenceVolumeNode parameter must be of type vtkMRMLVolumeNode or None.")
+        raise TypeError("The referenceVolumeNode parameter must be of type vtkMRMLVolumeNode or None.")
+
+    if segmentationNode is None:
+        logger.debug("No segmentationNode provided, using the first vtkMRMLSegmentationNode from the scene.")
+        segmentationNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentationNode")
+    if referenceVolumeNode is None:
+        logger.debug("No referenceVolumeNode provided, using the first vtkMRMLScalarVolumeNode from the scene.")
+        referenceVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+
     try:
-        if not isinstance(segmentId, str):
-            raise TypeError ("The variable segmentId must be a string.")
-        if not (isinstance(segmentationNode, vtkMRMLSegmentationNode) or isinstance(segmentationNode, None)):
-            raise TypeError ("The variable segmentationNode must be of type vtkMRMLSegmentationNode or None")
-        if not (isinstance(referenceVolumeNode, vtkMRMLVolumeNode) or isinstance(referenceVolumeNode, None)):
-            raise TypeError ("The variable referenceVolumeNode must be of typr vtkMRMLVolumeNode or None")
-    
-        if segementationNode is None:
-            segmentationNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentationNode")
-        if referenceVolumeNode is None:
-            referenceVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-        segmentArray = slicer.util.arrayFromSegmentBinaryLabelmap(segmentationNode, segmentId, referenceVolumeNode)
-    
+        logger.debug(f"Getting the segment array for segment ID: {segmentID}")
+        segmentArray = slicer.util.arrayFromSegmentBinaryLabelmap(segmentationNode, segmentID, referenceVolumeNode)
         return segmentArray
-        
-    except TypeError as e:
-        logger.error(f"A type error occured in get_segment_array \n{e}")  
+    
+    except Exception:
+        logger.exception("An error occurred in get_segment_array")
+        raise
 
 
-def create_volume_node(doseVolume, referenceNode, volumeName):
+def create_volume_node(volumeArray, referenceNode, volumeName):
     """
     This function creates a volume node from a numpy array.
 
     Parameters
     ----------
-    doseVolume : numpy.ndarray
+    volumeArray : numpy.ndarray
                 The numpy array to create the volume node from.
     referenceNode : vtkMRMLScalarVolumeNode
                 The reference node to create the volume node from.
@@ -101,18 +118,34 @@ def create_volume_node(doseVolume, referenceNode, volumeName):
     vtkMRMLScalarVolumeNode
         The volume node created from the numpy array.
     """
-    doseNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', volumeName)
-    doseNode.CopyOrientation(referenceNode)
-    doseNode.SetSpacing(referenceNode.GetSpacing())
-    doseNode.CreateDefaultDisplayNodes()
-    displayNode = doseNode.GetDisplayNode()
-    displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeRainbow')
-    slicer.util.updateVolumeFromArray(doseNode, doseVolume)
+    if not isinstance(volumeArray, np.ndarray):
+        logger.error("The volumeArray parameter must be a numpy array.")
+        raise TypeError("The volumeArray parameter must be a numpy array.")
+    if not isinstance(referenceNode, slicer.vtkMRMLScalarVolumeNode):
+        logger.error("The referenceNode parameter must be a vtkMRMLScalarVolumeNode.")
+        raise TypeError("The referenceNode parameter must be a vtkMRMLScalarVolumeNode.")
+    if not isinstance(volumeName, str):
+        logger.error("The volumeName parameter must be a string.")
+        raise TypeError("The volumeName parameter must be a string.")
+    
+    try:
+        logger.debug(f"Creating a new volume node with name: {volumeName}")
+        doseNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', volumeName)
+        doseNode.CopyOrientation(referenceNode)
+        doseNode.SetSpacing(referenceNode.GetSpacing())
+        doseNode.CreateDefaultDisplayNodes()
+        displayNode = doseNode.GetDisplayNode()
+        displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeRainbow')
+        slicer.util.updateVolumeFromArray(doseNode, volumeArray)
 
-    return doseNode
+        return doseNode
+    
+    except Exception:
+        logger.exception("An error occurred in create_volume_node")
+        raise
 
 
-def addSegmentationToNodeFromNumpyArr(segmentationNode, numpyArr, name, referenceVolumeNode, color=rnd.rand(3)):
+def add_segmentation_array_to_node(segmentationNode, segmentationArray, segmentName, referenceVolumeNode, color=None):
     """
     This function adds a segmentation to a node from a numpy array.
 
@@ -120,9 +153,9 @@ def addSegmentationToNodeFromNumpyArr(segmentationNode, numpyArr, name, referenc
     ----------
     segmentationNode : vtkMRMLSegmentationNode
                 The segmentation node to add the segmentation to.
-    numpyArr : numpy.ndarray
+    segmentationArray : numpy.ndarray
                 The numpy array to add to the segmentation node.
-    name : str
+    segmentName : str
                 The name of the segmentation to add.
     referenceVolumeNode : vtkMRMLScalarVolumeNode
                 The reference volume node to add the segmentation to.
@@ -131,359 +164,52 @@ def addSegmentationToNodeFromNumpyArr(segmentationNode, numpyArr, name, referenc
         
     Returns
     -------
-    None
+    str
+        The segment ID of the added segmentation.
     """
-    tempVolumeNode = createVolumeNode(numpyArr, referenceVolumeNode, "TempNode")
-    tempImageData = slicer.vtkSlicerSegmentationsModuleLogic.CreateOrientedImageDataFromVolumeNode(tempVolumeNode)
-    slicer.mrmlScene.RemoveNode(tempVolumeNode)
-    segmentationNode.AddSegmentFromBinaryLabelmapRepresentation(tempImageData, name, color)
+    if color is None:
+        color = tuple(rnd.rand(3))
 
-
-def crop_anterior(binary_mask_to_be_cropped, reference_mask, from_anterior=True):
-    """
-    Crops a binary mask from the anterior.
+    if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+        logger.error("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+        raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+    if not isinstance(segmentationArray, np.ndarray):
+        logger.error("The segmentationArray parameter must be a numpy array.")
+        raise TypeError("The segmentationArray parameter must be a numpy array.")
+    if not isinstance(segmentName, str):
+        logger.error("The segmentName parameter must be a string.")
+        raise TypeError("The segmentName parameter must be a string.")
+    if not isinstance(referenceVolumeNode, slicer.vtkMRMLScalarVolumeNode):
+        logger.error("The referenceVolumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+        raise TypeError("The referenceVolumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+    if not isinstance(color, tuple):
+        logger.error("The color parameter must be a tuple.")
+        raise TypeError("The color parameter must be a tuple.")
     
-    Parameters
-    ----------
-    binary_mask_to_be_cropped : numpy.ndarray
-                The binary mask to be cropped.
-    reference_mask : numpy.ndarray
-                The reference mask to be used for cropping.
-    from_anterior : bool, default: True
-                Specification to crop the binary mask from the anterior.
-                
-    Returns
-    -------
-    numpy.ndarray
-        The cropped binary mask.
-    """
     try:
-        if isinstance(binary_mask_to_be_cropped, np.ndarray) and isinstance(reference_mask, np.ndarray) and (from_anterior == True or from_anterior == False):
-            binary_mask = np.copy(binary_mask_to_be_cropped)
-            reference_mask_copy = np.copy(reference_mask)
+        logger.debug(f"Creating a temporary volume node for segmentation array.")
+        tempVolumeNode = create_volume_node(segmentationArray, referenceVolumeNode, "TempNode")
+        tempImageData = slicer.vtkSlicerSegmentationsModuleLogic.CreateOrientedImageDataFromVolumeNode(tempVolumeNode)
+        slicer.mrmlScene.RemoveNode(tempVolumeNode)
+        logger.debug(f"Adding the segmentation to the segmentation node.")
+        segmentID = segmentationNode.AddSegmentFromBinaryLabelmapRepresentation(tempImageData, segmentName, color)
 
-            if from_anterior:
-                most_anterior =  []
-
-                for slice in reference_mask_copy:
-                    for index in range(np.shape(slice)[0]):
-                        row = slice[index,:]
-                        if 1 in row:
-                            most_anterior.append(index)
-                            break
-
-                binary_mask[:, min(most_anterior):,:] = 0
-
-
-            elif from_anterior == False:
-                most_posterior =  []
-                
-                for slice in reference_mask_copy:
-                    for index in range(np.shape(slice)[0]):
-                        row = slice[index,:]
-                        most_posterior_in_slice = 0
-                        if 1 in row:
-                            if index > most_posterior_in_slice:
-                                most_posterior_in_slice = index
-                        most_posterior.append(most_posterior_in_slice)
-
-                binary_mask[:,: max(most_posterior),:] = 0
-
-            return(binary_mask)
+        return segmentID
     
-        else:
-            if isinstance(binary_mask_to_be_cropped, np.ndarray) and isinstance(reference_mask, np.ndarray):
-                raise Exception("The from_anterior parameter must be a boolean.")
-            elif isinstance(binary_mask_to_be_cropped, np.ndarray):
-                raise Exception("The reference_mask parameter must be a numpy.ndarray.")
-            elif isinstance(reference_mask, np.ndarray):
-                raise Exception("The binary_mask_to_be_cropped parameter must be a numpy.ndarray.")
-
-    except Exception as e:
-        logger.exception(e)
+    except Exception:
+        logger.exception("An error occurred in add_segmentation_array_to_node")
+        raise
 
 
-def crop_posterior(binary_mask_to_be_cropped, reference_tuple, from_anterior=True):
-    """
-    Crops a binary mask from the posterior.
-    
-    Parameters
-    ----------
-    binary_mask_to_be_cropped : numpy.ndarray
-                The binary mask to be cropped.
-    reference_tuple : Tuple[np.ndarray]
-                The reference mask to be used for cropping.
-    from_anterior : bool, default: True
-                Specification to crop the binary mask from the anterior.
-    
-    Returns
-    -------
-    numpy.ndarray
-        The cropped binary mask.
-    """
-    try:
-        if isinstance(binary_mask_to_be_cropped, np.ndarray) and isinstance(reference_tuple, tuple) and (from_anterior == True or from_anterior == False):
-            binary_mask = np.copy(binary_mask_to_be_cropped)
-
-            if from_anterior:
-                most_anterior =  []
-
-                for contour in reference_tuple:
-                    if isinstance(contour, np.ndarray):
-                        for slice in contour:
-                            for index in range(np.shape(slice)[0]):
-                                row = slice[index,:]
-                                if 1 in row:
-                                    most_anterior.append(index)
-                                    break
-                    
-                    else:
-                        raise Exception(f"The reference_tuple parameter must be a tuple of numpy.ndarrays.")
-                binary_mask[:,: min(most_anterior),:] = 0
-
-
-            elif from_anterior == False:
-                most_posterior =  []
-                
-                for contour in reference_tuple:
-                    for slice in contour:
-                        if isinstance(slice, np.ndarray):
-                            for index in range(np.shape(slice)[0]):
-                                row = slice[index,:]
-                                most_posterior_in_slice = 0
-                                if 1 in row:
-                                    if index > most_posterior_in_slice:
-                                        most_posterior_in_slice = index
-                                most_posterior.append(most_posterior_in_slice)
-                            
-                    else:
-                        raise Exception(f"The reference_tuple parameter must be a tuple of numpy.ndarrays.")
-                binary_mask[:, max(most_posterior):,:] = 0
-
-            return(binary_mask)
-    
-        else:
-            if isinstance(binary_mask_to_be_cropped, np.ndarray) and isinstance(reference_tuple, tuple):
-                raise Exception("The from_anterior parameter must be a boolean.")
-            elif isinstance(binary_mask_to_be_cropped, np.ndarray):
-                raise Exception("The reference_tuple parameter must be a tuple.")
-            elif isinstance(reference_tuple, tuple):
-                raise Exception("The binary_mask_to_be_cropped parameter must be a numpy.ndarray.")
-
-    except Exception as e:
-        logger.exception(e)
-
-def crop_inferior(main_mask, second_masks, from_top=True):
-    """
-    Keeps a binary mask in the region inferior to the secondary binary mask. If from_top=True, it will crop from the most superior slice of the second binary 
-    mask (inclusive). If from_top=Faslse, it will crop from the most inferior slice of the second binary mask (not inclusive).
-
-    Parameters
-    ----------
-    main_mask : numpy.ndarray
-                  The binary mask that is getting cropped.
-    second_masks : Tuple[numpy.ndarray]
-                    The binary masks that are selecting the bottom slice.
-    from_top : bool, default: True
-               Specification to take crop from top or bottom of the second_volume.
-               
-    Returns
-    -------
-    numpy.ndarray
-        The main volume cropped. 
-    """
-    try:
-        if isinstance(main_mask, np.ndarray) and isinstance(second_masks, tuple) and (from_top == True or from_top == False):
-            main_copy = np.copy(main_mask)
-            slices_w_mask = []
-
-            if from_top:
-                for outer_index, second_mask in enumerate(second_masks):
-                    if isinstance(second_mask, np.ndarray):
-                        for inner_index, slice in enumerate(second_mask):
-                            if 1 in slice:
-                                slices_w_mask.append(inner_index)
-                    else:
-                        raise Exception(f"The second_masks parameter must be a tuple of numpy.ndarrays. The array at index {outer_index} is not a numpy.ndarray.")
-                top_slice = max(slices_w_mask)
-                for index, slice in enumerate(main_copy):
-                    if index > top_slice:
-                        slice[slice == 1] = 0
-
-            elif not from_top:
-                for outer_index, second_mask in enumerate(second_masks):
-                    if isinstance(second_mask, np.ndarray):
-                        for inner_index, slice in enumerate(second_mask):
-                            if 1 in slice:
-                                slices_w_mask.append(inner_index)
-                    else:
-                        raise Exception(f"The second_masks parameter must be a tuple of numpy.ndarrays. The array at index {outer_index} is not a numpy.ndarray.")
-                bottom_slice = min(slices_w_mask)
-                for index, slice in enumerate(main_copy):
-                    if index >= bottom_slice:
-                        slice[slice == 1] = 0
-
-            return(main_copy)
-        
-        else:
-            if isinstance(main_mask, np.ndarray) and isinstance(second_masks, tuple):
-                raise Exception("The from_top parameter must be a boolean.")
-            elif isinstance(main_mask, np.ndarray):
-                raise Exception("The second_masks parameter must be a tuple.")
-            elif isinstance(second_masks, tuple):
-                raise Exception("The main_mask parameter must be a numpy.ndarray.")
-
-    except Exception as e:
-        logger.exception(e)
-
-
-def crop_inferior_lateral_bound(main_mask, second_masks, left_bound, right_bound, from_top=True):
-    """
-    Keeps a binary mask in the region inferior to the secondary binary mask. If from_top=True, it will crop from the most superior slice of the second binary 
-    mask (inclusive). If from_top=Faslse, it will crop from the most inferior slice of the second binary mask (not inclusive).
-
-    Parameters
-    ----------
-    main_mask : numpy.ndarray
-                  The binary mask that is getting cropped.
-    second_masks : Tuple[numpy.ndarray]
-                    The binary masks that are selecting the bottom slice.
-    left_bound : int
-                The left bound of the region to crop.
-    right_bound : int
-                The right bound of the region to crop.
-    from_top : bool, default: True
-               Specification to take crop from top or bottom of the second_volume.
-               
-    Returns
-    -------
-    numpy.ndarray
-        The main volume cropped. 
-    """
-    try:
-        if isinstance(main_mask, np.ndarray) and isinstance(second_masks, tuple) and (from_top == True or from_top == False) and isinstance(left_bound, int) and isinstance(right_bound, int):
-            main_copy = np.copy(main_mask)
-            slices_w_mask = []
-
-            if from_top:
-                for outer_index, second_mask in enumerate(second_masks):
-                    if isinstance(second_mask, np.ndarray):
-                        for inner_index, slice in enumerate(second_mask):
-                            if 1 in slice[:, left_bound:right_bound]:
-                                slices_w_mask.append(inner_index)
-                    else:
-                        raise Exception(f"The second_masks parameter must be a tuple of numpy.ndarrays. The array at index {outer_index} is not a numpy.ndarray.")
-                top_slice = max(slices_w_mask)
-                for index, slice in enumerate(main_copy):
-                    if index > top_slice:
-                        slice[slice == 1] = 0
-
-            elif not from_top:
-                for outer_index, second_mask in enumerate(second_masks):
-                    if isinstance(second_mask, np.ndarray):
-                        for inner_index, slice in enumerate(second_mask):
-                            if 1 in slice[:, left_bound:right_bound]:
-                                slices_w_mask.append(inner_index)
-                    else:
-                        raise Exception(f"The second_masks parameter must be a tuple of numpy.ndarrays. The array at index {outer_index} is not a numpy.ndarray.")
-                bottom_slice = min(slices_w_mask)
-                for index, slice in enumerate(main_copy):
-                    if index >= bottom_slice:
-                        slice[slice == 1] = 0
-
-            return(main_copy)
-        
-        else:
-            if isinstance(main_mask, np.ndarray) and isinstance(second_masks, tuple):
-                raise Exception("The from_top parameter must be a boolean.")
-            elif isinstance(main_mask, np.ndarray):
-                raise Exception("The second_masks parameter must be a tuple.")
-            elif isinstance(second_masks, tuple):
-                raise Exception("The main_mask parameter must be a numpy.ndarray.")
-
-    except Exception as e:
-        logger.exception(e)
-
-
-def crop_superior(main_mask, second_masks, from_top=True, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
-    """
-    Keeps a binary mask in the region superior to the secondary binary mask. If from_top=True, it will crop from the most superior slice of the second binary 
-    mask (not inclusive). If from_top=Faslse, it will crop from the most inferior slice of the second binary mask(inclusive).
-
-    Parameters
-    ----------
-    main_masks : numpy.ndarray
-                  The binary mask that is getting cropped.
-    second_masks : Tuple[numpy.ndarray]
-                    The binary masks that are selecting the bottom slice.
-        from_top : bool, default: True
-               Specification to take crop from top or bottom of the second_volume.
-               
-    Returns
-    -------
-    numpy.ndarray
-        The main volume cropped.
-    """
-    try:
-        if isinstance(main_mask, np.ndarray) and isinstance(second_masks, tuple) and (from_top == True or from_top == False):
-            main_copy = np.copy(main_mask)
-            slices_w_mask = []
-
-            if from_top:
-                for outer_index, second_mask in enumerate(second_masks):
-                    if isinstance(second_mask, np.ndarray):
-                        for inner_index, slice in enumerate(second_mask):
-                            if 1 in slice:
-                                slices_w_mask.append(inner_index)
-                    else:
-                        raise Exception(f"The second_masks parameter must be a tuple of numpy.ndarrays. The array at index {outer_index} is not a numpy.ndarray.")
-                top_slice = max(slices_w_mask)
-                for index, slice in enumerate(main_copy):
-                    if index-1 < top_slice:
-                        slice[slice == 1] = 0
-
-            if not from_top:
-                for outer_index, second_mask in enumerate(second_masks):
-                    if isinstance(second_mask, np.ndarray):
-                        for inner_index, slice in enumerate(second_mask):
-                            if 1 in slice:
-                                slices_w_mask.append(inner_index)
-                    else:
-                        raise Exception(f"The second_masks parameter must be a tuple of numpy.ndarrays. The array at index {outer_index} is not a numpy.ndarray.")
-                bottom_slice = min(slices_w_mask)
-                for index, slice in enumerate(main_copy):
-                    if index <= bottom_slice:
-                        slice[slice == 1] = 0
-
-            if add_segmentation_to_node:
-                if isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode) and isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode) and isinstance(volume_name, str):
-                    addSegmentationToNodeFromNumpyArr(segmentationNode, main_copy, volume_name, volumeNode)
-                else:
-                    raise Exception("The segmentationNode parameter must be a vtkMRMLSegmentationNode, the volumeNode parameter must be a vtkMRMLScalarVolumeNode, and the volume_name parameter must be a string.")
-
-            return(main_copy)
-        
-        else:
-            if isinstance(main_mask, np.ndarray) and isinstance(second_masks, tuple):
-                raise Exception("The from_top parameter must be a boolean.")
-            elif isinstance(main_mask, np.ndarray):
-                raise Exception("The second_masks parameter must be a tuple.")
-            elif isinstance(second_masks, tuple):
-                raise Exception("The main_mask parameter must be a numpy.ndarray.")
-    
-    except Exception as e:
-        logger.exception(e)
-
-
-def check_intersection(mask_1, mask_2, num_voxels_threshold=1):
+def check_intersection_binary_mask(mask_1_array, mask_2_array, num_voxels_threshold=1):
     """
     Checks if two binary masks intersect.
 
     Parameters
     ----------
-    mask_1 : numpy.ndarray
+    mask_1_array : numpy.ndarray
              The first binary mask.
-    mask_2 : numpy.ndarray
+    mask_2_array : numpy.ndarray
              The second binary mask.
     num_voxels_threshold : int, default: 1
                            The number of voxels that must be intersecting for the function to return True.
@@ -493,22 +219,37 @@ def check_intersection(mask_1, mask_2, num_voxels_threshold=1):
     bool
         True if the masks intersect, False if they do not intersect.
     """
-    intersection = np.logical_and(mask_1, mask_2)
-    if np.sum(intersection) >= num_voxels_threshold:
-        return(True)
-    else:
-        return(False)
+    if not isinstance(mask_1_array, np.ndarray):
+        logger.error("The mask_1_array parameter must be a numpy array.")
+        raise TypeError("The mask_1_array parameter must be a numpy array.")
+    if not isinstance(mask_2_array, np.ndarray):
+        logger.error("The mask_2_array parameter must be a numpy array.")
+        raise TypeError("The mask_2_array parameter must be a numpy array.")
+    if not isinstance(num_voxels_threshold, int):
+        logger.error("The num_voxels_threshold parameter must be an integer.")
+        raise TypeError("The num_voxels_threshold parameter must be an integer.")
+        
+    try:
+        intersection = np.logical_and(mask_1_array, mask_2_array)
+        if np.sum(intersection) >= num_voxels_threshold:
+            return True
+        else:
+            return False
     
+    except Exception:
+        logger.exception("An error occurred in check_intersection_binary_mask")
+        raise
 
-def Margin_editor(input_Id, new_ID, segmentationNode, volumeNode, operation='Grow', MarginSize=10.0):
+
+def margin_editor_effect(inputName, newName, segmentationNode, volumeNode, operation='Grow', MarginSize=10.0):
     """
-    This function dilates or shrinks a segment in a segmentation node. This function automatically copys the function and crops the segment in the vertical direction.
+    This function dilates or shrinks a segment in a segmentation node. This function automatically copies the function before applying the margin effect (makes a new segment).
 
     Parameters
     ----------
-    inputId : str
+    inputName : str
                 The name of the segment to dilate or shrink.
-    new_ID : str
+    newName : str
                 The name of the new segment.
     segmentationNode : vtkMRMLSegmentationNode
                 The segmentation node containing the segment to dilate or shrink.
@@ -521,41 +262,77 @@ def Margin_editor(input_Id, new_ID, segmentationNode, volumeNode, operation='Gro
 
     Returns
     -------
-    None
+    str
+        The segment ID of the new segment.
     """
-    copy_segmentation(segmentationNode, input_Id, new_ID)
-
-    segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
-    segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
-    segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
-    segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
-
-    segmentEditorWidget.setSegmentationNode(segmentationNode)
-    segmentEditorWidget.setSourceVolumeNode(volumeNode)
-    # Set overwrite mode: 0/1/2 -> overwrite all/visible/none
-    segmentEditorNode.SetOverwriteMode(2) # i.e. "allow overlap" in UI
-    # Get the segment IDs
-    segid_src = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(new_ID)
-    segmentEditorNode.SetSelectedSegmentID(segid_src)
-
-
-    segmentEditorWidget.setActiveEffectByName("Margin")
-    effect = segmentEditorWidget.activeEffect()
+    if not isinstance(inputName, str):
+        logger.error("The inputName parameter must be a string.")
+        raise TypeError("The inputName parameter must be a string.")
+    if not isinstance(newName, str):
+        logger.error("The newName parameter must be a string.")
+        raise TypeError("The newName parameter must be a string.")
+    if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+        logger.error("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+        raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+    if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
+        logger.error("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+        raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+    if not isinstance(operation, str):
+        logger.error("The operation parameter must be a string.")
+        raise TypeError("The operation parameter must be a string.")
+    if not isinstance(MarginSize, float):
+        logger.error("The MarginSize parameter must be a float.")
+        raise TypeError("The MarginSize parameter must be a float.")
+    
     try:
-        if operation == 'Grow' or operation == 'Shrink':
+        logger.debug(f"Copying segment {inputName} to {newName}")
+        copy_segmentation(segmentationNode, inputName, newName)
+
+        logger.debug(f"Setting up segment editor widget")
+        segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
+        segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
+        segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+        segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
+
+        segmentEditorWidget.setSegmentationNode(segmentationNode)
+        segmentEditorWidget.setSourceVolumeNode(volumeNode)
+        segmentEditorNode.SetOverwriteMode(2)  # i.e. "allow overlap" in UI
+
+        newSegmentID = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(newName)
+        segmentEditorNode.SetSelectedSegmentID(newSegmentID)
+
+        logger.debug(f"Setting up margin effect")
+        segmentEditorWidget.setActiveEffectByName("Margin")
+        effect = segmentEditorWidget.activeEffect()
+    
+        logger.debug(f"Applying margin effect")
+        if operation in ['Grow', 'Shrink']:
             effect.setParameter("Operation", operation)
         else:
-            raise Exception ("Invalid operation. Operation must be 'Grow' or 'Shrink.'")
+            logger.error("Invalid operation. Operation must be 'Grow' or 'Shrink.'")
+            raise ValueError("Invalid operation. Operation must be 'Grow' or 'Shrink.'")
+        
         if (isinstance(MarginSize, float) or isinstance(MarginSize, int)) and MarginSize > 0:
             effect.setParameter("MarginSizeMm", MarginSize)
         else:
-            raise Exception ("Invalid MarginSize. MarginSize must be a positive number.")
-        effect.self().onApply()
-    except Exception as e:
-        logger.exception(e)
+            logger.error("Invalid MarginSize. MarginSize must be a positive number.")
+            raise ValueError("Invalid MarginSize. MarginSize must be a positive number.")
+        effect.self().onApply() 
+
+        return newSegmentID 
+
+    except TypeError:
+        logger.exception("A type error occurred in margin_editor_effect")
+        raise
+    except ValueError:
+        logger.exception("A value error occurred in margin_editor_effect")
+        raise
+    except Exception:
+        logger.exception("An error occurred in margin_editor_effect")
+        raise
         
 
-def make_blank_segment(segmentationNode, segment_name):
+def make_blank_segment(segmentationNode, segmentName):
     """
     This function creates a blank segment in a segmentation node.
 
@@ -563,17 +340,32 @@ def make_blank_segment(segmentationNode, segment_name):
     ----------
     segmentationNode : vtkMRMLSegmentationNode
                 The segmentation node to add the segment to.
-    segment_name : str
+    segmentName : str
                 The name of the segment to add.
 
     Returns
     -------
-    None
+    str
+        The segment ID of the new segment.
     """
-    segmentationNode.GetSegmentation().AddEmptySegment(segment_name)
+    if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+        logger.error("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+        raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+    if not isinstance(segmentName, str):
+        logger.error("The segmentName parameter must be a string.")
+        raise TypeError("The segmentName parameter must be a string.")
+    
+    try:
+        logger.debug(f"Creating a blank segment with name {segmentName}")
+        segmentID = segmentationNode.GetSegmentation().AddEmptySegment(segmentName)
+        return segmentID
+    
+    except Exception:
+        logger.exception("An error occurred in make_blank_segment")
+        raise
 
 
-def copy_segmentation(segmentationNode, segment_name, new_segment_name):
+def copy_segmentation(segmentationNode, segmentName, newSegmentName):
     """
     This function copies a segment in a segmentation node.
 
@@ -581,49 +373,114 @@ def copy_segmentation(segmentationNode, segment_name, new_segment_name):
     ----------
     segmentationNode : vtkMRMLSegmentationNode
                 The segmentation node to copy the segment in.
-    segment_name : str
+    segmentName : str
                 The name of the segment to copy.
-    new_segment_name : str
+    newSegmentName : str
                 The name of the new segment.
 
     Returns
     -------
-    None
+    str
+        The segment ID of the new segment.
     """
-    segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
-    segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
-    segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
-    segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
-
-    segmentEditorWidget.setSegmentationNode(segmentationNode)
-    volumeNode = slicer.util.getNodesByClass("vtkMRMLVolumeNode")[0]
-    segmentEditorWidget.setSourceVolumeNode(volumeNode)
-    # Set overwrite mode: 0/1/2 -> overwrite all/visible/none
-    segmentEditorNode.SetOverwriteMode(2) # i.e. "allow overlap" in UI
-    # Get the segment IDs
-    segmentationNode.AddSegmentFromClosedSurfaceRepresentation(vtk.vtkPolyData(), new_segment_name)
-    segid_tgt = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(new_segment_name)
-    segid_src = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(segment_name)
+    if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+        raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+    if not isinstance(segmentName, str):
+        raise TypeError("The segmentName parameter must be a string.")
+    if not isinstance(newSegmentName, str):
+        raise TypeError("The newSegmentName parameter must be a string.")
     
-    segmentEditorNode.SetSelectedSegmentID(segid_tgt)
-    segmentEditorWidget.setActiveEffectByName("Logical operators")
-    effect = segmentEditorWidget.activeEffect()
-    effect.setParameter("Operation","COPY") # change the operation here
-    effect.setParameter("ModifierSegmentID",segid_src)
-    effect.self().onApply()
+    try:
+        logger.debug(f"Setting up segment editor widget")
+        segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
+        segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
+        segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+        segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
+
+        segmentEditorWidget.setSegmentationNode(segmentationNode)
+        volumeNode = slicer.util.getNodesByClass("vtkMRMLVolumeNode")[0]
+        segmentEditorWidget.setSourceVolumeNode(volumeNode)
+        # Set overwrite mode: 0/1/2 -> overwrite all/visible/none
+        segmentEditorNode.SetOverwriteMode(2)  # i.e. "allow overlap" in UI
+
+        # Get the segment IDs
+        logger.debug(f"getting the segment IDs")
+        segmentationNode.AddSegmentFromClosedSurfaceRepresentation(vtk.vtkPolyData(), newSegmentName)
+        targetSegmentID = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(newSegmentName)
+        modifierSegmentID = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(segmentName)
+        
+        logger.debug(f"Setting the parameters for the logical operators effect")
+        segmentEditorNode.SetSelectedSegmentID(targetSegmentID)
+        segmentEditorWidget.setActiveEffectByName("Logical operators")
+        effect = segmentEditorWidget.activeEffect()
+        effect.setParameter("Operation", "COPY")  # change the operation here
+        effect.setParameter("ModifierSegmentID", modifierSegmentID)
+        effect.self().onApply()
+
+        return targetSegmentID
+    
+    except Exception:
+        logger.exception("An error occurred in copy_segmentation")
+        raise
 
 
-def combine_masks_from_array(mask_1, mask_2, add_segmentation_to_node=True, segmentationNode=None, volumeNode=None, segment_name=None):
+def combine_masks_from_array(mask1, mask2, addSegmentationToNode=False, segmentationNode=None, volumeNode=None, segmentName=None):
     """
-    Combines two binary masks.
+    Combines two binary masks. This function uses numpy's bitwise_or function to combine the masks. The function can also add the combined mask to a segmentation node.
 
     Parameters
     ----------
-    mask_1 : numpy.ndarray
+    mask1 : numpy.ndarray
              The first binary mask.
-    mask_2 : numpy.ndarray
+    mask2 : numpy.ndarray
              The second binary mask.
-    add_segmentation_to_node : bool, default: True
+    addSegmentationToNode : bool, default: False
+                Specification to add the combined mask to a segmentation node.
+    segmentationNode : vtkMRMLSegmentationNode, default: None
+                The segmentation node to add the combined mask.
+    volumeNode : vtkMRMLScalarVolumeNode, default: None
+                The volume node that the segmentation node is based on. 
+    segmentName : str, default: None
+                The name of the segment to add the combined mask to.
+               
+    Returns
+    -------
+    numpy.ndarray
+        The combined binary mask.
+    """
+    if not isinstance(mask1, np.ndarray):
+        raise TypeError("The mask1 parameter must be a numpy.ndarray.")
+    if not isinstance(mask2, np.ndarray):
+        raise TypeError("The mask2 parameter must be a numpy.ndarray.")
+    
+    logger.debug(f"Combining masks")
+    combined_mask = np.bitwise_or(mask1, mask2)
+    
+    if addSegmentationToNode:
+        if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+            raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+        if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
+            raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+        if not isinstance(segmentName, str):
+            raise TypeError("The segment_name parameter must be a string.")
+
+        logger.debug(f"Adding the combined mask to the segmentation node {segmentationNode}")     
+        add_segmentation_array_to_node(segmentationNode, combined_mask, segmentName, volumeNode)
+    
+    return combined_mask
+
+
+def bitwise_and_from_array(mask1, mask2, addSegmentationToNode=False, segmentationNode=None, volumeNode=None, segmentName=None):
+    """
+    Combines two binary masks where the masks overlap. This function uses numpy's bitwise_and function to combine the masks. The function can also add the combined mask to a segmentation node.
+
+    Parameters
+    ----------
+    mask1 : numpy.ndarray
+             The first binary mask.
+    mask2 : numpy.ndarray
+             The second binary mask.
+    addSegmentationToNode : bool, default: False
                 Specification to add the combined mask to a segmentation node.
     segmentationNode : vtkMRMLSegmentationNode
                 The segmentation node to add the combined mask to.
@@ -638,294 +495,254 @@ def combine_masks_from_array(mask_1, mask_2, add_segmentation_to_node=True, segm
         The combined binary mask.
     """
     try:
-        if isinstance(mask_1, np.ndarray) and isinstance(mask_2, np.ndarray):
-            combined_mask = np.bitwise_or(np.copy(mask_1), np.copy(mask_2))
-            if add_segmentation_to_node:
-                addSegmentationToNodeFromNumpyArr(segmentationNode, combined_mask, segment_name, volumeNode)
-            return(combined_mask)
+        if isinstance(mask1, np.ndarray) and isinstance(mask2, np.ndarray):
+            logger.debug(f"Combining masks")
+            combined_mask = np.bitwise_and(mask1, mask2)
+            
+            if addSegmentationToNode:
+                if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+                    raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+                if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
+                    raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+                if not isinstance(segmentName, str):
+                    raise TypeError("The segment_name parameter must be a string.")
+
+                logger.debug(f"Adding the combined mask to the segmentation node {segmentationNode}")     
+                add_segmentation_array_to_node(segmentationNode, combined_mask, segmentName, volumeNode)
+            
+            return combined_mask
+        
         else:
-            if isinstance(mask_1, np.ndarray):
-                raise Exception("The mask_2 parameter must be a numpy.ndarray.")
-            elif isinstance(mask_2, np.ndarray):
-                raise Exception("The mask_1 parameter must be a numpy.ndarray.")
-    except Exception as e:
-        logger.exception(e)
+            if not isinstance(mask1, np.ndarray):
+                raise TypeError("The mask1 parameter must be a numpy.ndarray.")
+            if not isinstance(mask2, np.ndarray):
+                raise TypeError("The mask2 parameter must be a numpy.ndarray.")
+        
+    except TypeError:
+        logger.exception("A type error occurred in bitwise_and_from_array")
+        raise
+    except ValueError:
+        logger.exception("A value error occurred in bitwise_and_from_array")
+        raise
 
 
-def bitwise_and_from_array(mask_1, mask_2, add_segmentation_to_node=True, segmentationNode=None, volumeNode=None, segment_name=None):
+def remove_mask_superior_to_slice(maskArray, slice_number, addSegmentationToNode=False, segmentationNode=None, volumeNode=None, segmentName=None):
     """
-    Combines two binary masks.
-
-    Parameters
-    ----------
-    mask_1 : numpy.ndarray
-             The first binary mask.
-    mask_2 : numpy.ndarray
-             The second binary mask.
-    add_segmentation_to_node : bool, default: True
-                Specification to add the combined mask to a segmentation node.
-    segmentationNode : vtkMRMLSegmentationNode
-                The segmentation node to add the combined mask to.
-    volumeNode : vtkMRMLScalarVolumeNode
-                The volume node that the segmentation node is based on. 
-    segment_name : str
-                The name of the segment to add the combined mask to.
-               
-    Returns
-    -------
-    numpy.ndarray
-        The combined binary mask.
-    """
-    combined_mask = np.bitwise_and(np.copy(mask_1), np.copy(mask_2))
-
-    if add_segmentation_to_node:
-        addSegmentationToNodeFromNumpyArr(segmentationNode, combined_mask, segment_name, volumeNode)
-
-    return(combined_mask)
-
-
-def crop_inferior_to_slice(main_mask, slice_number):
-    """
-    Keeps a binary mask in the region inferior to the specified slice number.
-    
+    Crops the input maskArray to the region superior of the specified slice number. This function can also add the cropped mask to a segmentation node.
+        
     Parameters
     ----------  
-    main_volume : numpy.ndarray
+    maskArray : numpy.ndarray
                   The binary mask that is getting cropped.
     slice_number : int
-                   The slice number to crop to.
+                   The slice number used for the crop.
+    addSegmentationToNode : bool, default: False
+                Specification to add the cropped mask to a segmentation node.
+    segmentationNode : vtkMRMLSegmentationNode, default: None
+                The segmentation node to add the cropped mask to.
+    volumeNode : vtkMRMLScalarVolumeNode, default: None
+                The volume node that the segmentation node is based on.
+    segmentName : str, default: None
+                The name of the segment to add the cropped mask to.
     
     Returns
     -------
     numpy.ndarray
-        The main volume cropped.
+        The mask array cropped.
     """
-    try:
-        if isinstance(main_mask, np.ndarray) and isinstance(slice_number, int):
-            main_copy = np.copy(main_mask)
-            slice_shape = main_mask.shape[1:]
-            dtype_img = main_mask.dtype
+    if not isinstance(maskArray, np.ndarray):
+        logger.error("The maskArray parameter must be a numpy.ndarray.")
+        raise TypeError("The maskArray parameter must be a numpy.ndarray.")
+    if not isinstance(slice_number, int):
+        logger.error("The slice_number parameter must be an integer.")
+        raise TypeError("The slice_number parameter must be an integer.")
+    if slice_number < 0 or slice_number >= maskArray.shape[0]:
+        logger.error("The slice_number parameter must be less than the number of slices in the maskArray and greater than or equal to 0.")
+        raise IndexError("The slice_number parameter must be less than the number of slices in the maskArray and greater than or equal to 0.")
 
-            for index, slice in enumerate(main_copy):
-                if index < slice_number:
-                    np.putmask(slice, np.ones(slice_shape, dtype=dtype_img), 0)
-            
-            return(main_copy)
+    logger.debug(f"Cropping the mask to the region superior to slice {slice_number}")
+    main_copy = np.copy(maskArray)
+    main_copy[slice_number + 1:] = 0
+
+    if addSegmentationToNode:
+        if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+            raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+        if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
+            raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+        if not isinstance(segmentName, str):
+            raise TypeError("The segment_name parameter must be a string.")
+
+        logger.debug(f"Adding the cropped mask to the segmentation node {segmentationNode}")     
+        add_segmentation_array_to_node(segmentationNode, main_copy, segmentName, volumeNode)
+    
+    return main_copy
+
+
+def remove_mask_inferior_to_slice(maskArray, slice_number, addSegmentationToNode=False, segmentationNode=None, volumeNode=None, segmentName=None):
+    """
+    Crops the input maskArray to the region inferior to the specified slice number. This function can also add the cropped mask to a segmentation node.
         
-        else:
-            if isinstance(main_mask, np.ndarray):
-                raise Exception("The slice_number parameter must be an integer.")
-            elif isinstance(slice_number, int):
-                raise Exception("The main_mask parameter must be a numpy.ndarray.")
-    
-    except Exception as e:
-        logger.exception(e)
-
-
-def crop_superior_to_slice(main_mask, slice_number):
-    """
-    Keeps a binary mask in the region superior to the specified slice number.
-    
     Parameters
     ----------  
-    main_volume : numpy.ndarray
+    maskArray : numpy.ndarray
                   The binary mask that is getting cropped.
     slice_number : int
-                   The slice number to crop to.
+                   The slice number used for the crop.
+    addSegmentationToNode : bool, default: False
+                Specification to add the cropped mask to a segmentation node.
+    segmentationNode : vtkMRMLSegmentationNode, default: None
+                The segmentation node to add the cropped mask to.
+    volumeNode : vtkMRMLScalarVolumeNode, default: None
+                The volume node that the segmentation node is based on.
+    segmentName : str, default: None
+                The name of the segment to add the cropped mask to.
     
     Returns
     -------
     numpy.ndarray
-        The main volume cropped.
+        The mask array cropped.
     """
-    try:
-        if isinstance(main_mask, np.ndarray) and isinstance(slice_number, int):
-            main_copy = np.copy(main_mask)
-            slice_shape = main_mask.shape[1:]
-            dtype_img = main_mask.dtype
+    if not isinstance(maskArray, np.ndarray):
+        logger.error("The maskArray parameter must be a numpy.ndarray.")
+        raise TypeError("The maskArray parameter must be a numpy.ndarray.")
+    if not isinstance(slice_number, int):
+        logger.error("The slice_number parameter must be an integer.")
+        raise TypeError("The slice_number parameter must be an integer.")
+    if slice_number < 0 or slice_number >= maskArray.shape[0]:
+        logger.error("The slice_number parameter must be less than the number of slices in the maskArray and greater than or equal to 0.")
+        raise IndexError("The slice_number parameter must be less than the number of slices in the maskArray and greater than or equal to 0.")
 
-            for index, slice in enumerate(main_copy):
-                if index > slice_number:
-                    np.putmask(slice, np.ones(slice_shape, dtype=dtype_img), 0)
-            
-            return(main_copy)
-        
-        else:
-            if isinstance(main_mask, np.ndarray):
-                raise Exception("The slice_number parameter must be an integer.")
-            elif isinstance(slice_number, int):
-                raise Exception("The main_mask parameter must be a numpy.ndarray.")
+    logger.debug(f"Cropping the mask to the region inferior to slice {slice_number}")
+    main_copy = np.copy(maskArray)
+    main_copy[:slice_number] = 0
+
+    if addSegmentationToNode:
+        if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+            raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+        if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
+            raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+        if not isinstance(segmentName, str):
+            raise TypeError("The segment_name parameter must be a string.")
+
+        logger.debug(f"Adding the cropped mask to the segmentation node {segmentationNode}")     
+        add_segmentation_array_to_node(segmentationNode, main_copy, segmentName, volumeNode)
     
-    except Exception as e:
-        logger.exception(e)
+    return main_copy
 
 
-def dfs(i, j, slice):
+def project_segmentation_vertically_from_array(maskArray, numberOfSlicesToCombine, numberOfSlicesToProject=5, projectInferior=False, addSegmentationToNode=False, segmentationNode=None, volumeNode=None, segmentName=None):
     """
-    Performs a depth-first search on a binary mask array.
+    This function projects a binary mask array in the vertical direction (either uperiorly or posteriorly). The function can also add the projected mask to a segmentation node.
 
     Parameters
     ----------
-    i : int
-        The row of the starting point.
-    j : int
-        The column of the starting point.
-    slice : numpy.ndarray
-            The binary mask array to perform the depth-first search on.
-               
-    Returns
-    -------
-    None
-    """
-    rows, cols = len(slice), len(slice[0])
-    if i < 0 or i >= rows or j < 0 or j >= cols or slice[i][j] != 1:
-        return
-    slice[i][j] = 0
-    dfs(i+1, j, slice)
-    dfs(i-1, j, slice)
-    dfs(i, j+1, slice)
-    dfs(i, j-1, slice)
-
-
-def first_slice_with_island(binary_mask_array, from_superior=True):
-    """
-    Finds the first slice with an island in a binary mask array.
-
-    Parameters
-    ----------
-    binary_mask_array : numpy.ndarray
-                The binary mask array to find the first slice with an island in.
-    from_superior : bool, default: True
-                Specification to find the first slice with an island from the superior direction.
-               
-    Returns
-    -------
-    int
-        The first slice with an island.
-    """
-    try:
-        mask_copy = np.copy(binary_mask_array)
-        count = 0
-        
-        if not from_superior:
-            for index, slice in enumerate(mask_copy):
-                rows, cols = len(slice), len(slice[0])
-                for i in range(rows):
-                    for j in range(cols):
-                        if slice[i][j] == 1:
-                            dfs(i,j, slice)
-                            count +=1
-                if count >= 2:
-                    return index
-                
-        elif from_superior:
-            for index, slice in enumerate(mask_copy[::-1]):
-                rows, cols = len(slice), len(slice[0])
-                for i in range(rows):
-                    for j in range(cols):
-                        if slice[i][j] == 1:
-                            dfs(i,j, slice)
-                            count +=1
-                if count >= 2:
-                    return len(mask_copy) - index - 1
-                
-        else:
-            raise Exception ("Invalid from_superior. from_superior must be True or False.")
-    
-    except Exception as e:
-        logger.exception(e)
-
-
-def project_segmentation_from_array(binary_mask_array, number_of_slices_to_combine, number_of_slices_to_project, segmentationNode, volumeNode,  project_inferior=True, project_superior=True, addSegmentationToNode=True, segment_name=None):
-    """
-    This function projects a binary mask array in the vertical direction.
-
-    Parameters
-    ----------
-    binary_mask_array : numpy.ndarray
+    maskArray : numpy.ndarray
                 The binary mask array to project.
-    number_of_slices_to_combine : int
+    nuberOfSlicesToCombine : int
                 The number of slices to combine before projection.
-    number_of_slices_to_project : int
+    numberOfSlicesToProject : int, default: 5
                 The number of slices to project.
-    segmentationNode : vtkMRMLSegmentationNode
-                The segmentation node to add the projected segment to.
-    volumeNode : vtkMRMLScalarVolumeNode
-                The volume node that the segmentation node is based on. 
-    project_inferior : bool, default: True
+    projectInferior : bool, default: True
                 Specification to project the inferior direction.
-    project_superior : bool, default: True
-                Specification to project the superior direction.
-    addSegmentationToNode : bool, default: True
+    addSegmentationToNode : bool, default: False
                 Specification to add the projected segment to a segmentation node.
-    segment_name : str
+    segmentationNode : vtkMRMLSegmentationNode, default: None
+                The segmentation node to add the projected segment to.
+    volumeNode : vtkMRMLScalarVolumeNode, default: None
+                The volume node that the segmentation node is based on. 
+    segmentName : str, default: None
                 The name of the segment to add the projected mask to.
 
     Returns
     -------
-    None
+    numpy.ndarray
+                The numpy array with the projected segmentation
     """
+    if not isinstance(maskArray, np.ndarray):
+        logger.error("The maskArray parameter must be a numpy.ndarray.")
+        raise TypeError("The maskArray parameter must be a numpy.ndarray.")
+    if not isinstance(numberOfSlicesToCombine, int):
+        logger.error("The numberOfSlicesToCombine parameter must be an integer.")
+        raise TypeError("The numberOfSlicesToCombine parameter must be an integer.")
+    if not numberOfSlicesToCombine > 0:
+        logger.error("The numberOfSlicesToCombine parameter must be greater than 0")
+        raise ValueError("The numberOfSlicesToCombine parameter must be greater than 0")
+    if not isinstance(numberOfSlicesToProject, int):
+        logger.error("The numberOfSlicesToProject parameter must be an integer.")
+        raise TypeError("The numberOfSlicesToProject parameter must be an integer.")
+    
     slices_w_mask = []
-    main_copy = np.copy(binary_mask_array)
-    for index, slice in enumerate(binary_mask_array):
+    main_copy = np.copy(maskArray)
+    for index, slice in enumerate(maskArray):
         if 1 in slice:
             slices_w_mask.append(index)
 
     try:
-        if project_inferior:
+        if projectInferior:
+            logger.debug(f"Projecting inferiorly")
             bottom_slice = min(slices_w_mask)
 
-            if isinstance(number_of_slices_to_combine, int) and number_of_slices_to_combine > 0:
-                last_slices = main_copy[bottom_slice : bottom_slice + number_of_slices_to_combine]
-                result = last_slices[0]
-                all_slices_to_change = np.arange(bottom_slice - number_of_slices_to_project, bottom_slice + number_of_slices_to_combine)
+            logger.debug(f"Calculating the last slices")
+            last_slices = main_copy[bottom_slice : bottom_slice + numberOfSlicesToCombine]
+            result = last_slices[0]
+            all_slices_to_change = np.arange(bottom_slice - numberOfSlicesToProject, bottom_slice + numberOfSlicesToProject)
 
-                for slice in last_slices[1:]:
-                    result = np.bitwise_or(result, slice)        
-                
-                for index in all_slices_to_change:
-                    main_copy[index] = result
+            logger.debug(f"Creating the array")
+            for slice in last_slices[1:]:
+                result = np.bitwise_or(result, slice)        
             
-            else:
-                raise Exception ("Invalid number_of_slices. number_of_slices must be a positive integer.")
+            for index in all_slices_to_change:
+                main_copy[index] = result
 
-        if project_superior:
+            logger.info(f"Finished creating the array")
+
+        if not projectInferior:
+            logger.debug(f"Projecting superiorly")
             top_slice = max(slices_w_mask)
-
-            if isinstance(number_of_slices_to_combine, int) and number_of_slices_to_combine > 0:
-                first_slices = main_copy[top_slice - number_of_slices_to_combine + 1 : top_slice + 1]
-                result = first_slices[0]
-                all_slices_to_change = np.arange(top_slice - number_of_slices_to_combine + 1, top_slice + number_of_slices_to_project + 1)
-
-                for slice in first_slices[1:]:
-                    result = np.bitwise_or(result, slice)        
-
-                for index in all_slices_to_change:
-                    main_copy[index] = result
             
-            else:
-                raise Exception ("Invalid number_of_slices. number_of_slices must be a positive integer.")
+            logger.debug(f"Calculating the first slices")
+            first_slices = main_copy[top_slice - numberOfSlicesToCombine + 1 : top_slice + 1]
+            result = first_slices[0]
+            all_slices_to_change = np.arange(top_slice - numberOfSlicesToCombine + 1, top_slice + numberOfSlicesToProject + 1)
+
+            logger.debug(f"Creating the array")
+            for slice in first_slices[1:]:
+                result = np.bitwise_or(result, slice)        
+
+            for index in all_slices_to_change:
+                main_copy[index] = result
+            
+            logger.info(f"Finished creating the array")
 
         if addSegmentationToNode:
-            addSegmentationToNodeFromNumpyArr(segmentationNode, main_copy, segment_name, volumeNode)
+            if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+                raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+            if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
+                raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+            if not isinstance(segmentName, str):
+                raise TypeError("The segment_name parameter must be a string.")
+            
+            logger.debug(f"Adding the segmentation array to the node {segmentationNode}")
+            add_segmentation_array_to_node(segmentationNode, main_copy, segmentName, volumeNode)
         
-        return(main_copy)
+        return main_copy
 
     except Exception as e:
         logger.exception(e)
+        raise
 
 
-def create_binary_mask_between(binary_mask_array_left, binary_mask_array_right, from_medial=True):
+def create_binary_mask_between(binaryMaskArrayLeft, binaryMaskArrayRight, fromMedial=True):
     """
-    Creates a binary mask between two binary masks.
+    Creates a binary mask between two binary masks. The function can create the binary mask from the medial or lateral direction.
     
     Parameters
     ----------
-    binary_mask_array_left : numpy.ndarray
+    binaryMaskArrayLeft : numpy.ndarray
                 The binary mask array to the left.
-    binary_mask_array_right : numpy.ndarray
+    binaryMaskArrayRight : numpy.ndarray
                 The binary mask array to the right.
-    from_medial : bool, default: True
+    fromMedial : bool, default: True
                 Specification to create the binary mask from the medial direction.
                 
     Returns
@@ -933,85 +750,90 @@ def create_binary_mask_between(binary_mask_array_left, binary_mask_array_right, 
     numpy.ndarray
         The binary mask between the two binary masks.
     """
+    if not isinstance(binaryMaskArrayLeft, np.ndarray):
+        raise Exception("The binaryMaskArrayLeft parameter must be a numpy.ndarray.")
+    if not isinstance(binaryMaskArrayRight, np.ndarray):
+        raise Exception("The binaryMaskArrayRight parameter must be a numpy.ndarray.")
+    if not isinstance(fromMedial, bool):
+        raise Exception("The fromMedial parameter must be a boolean.")
+
     try:
-        if isinstance(binary_mask_array_left, np.ndarray) and isinstance(binary_mask_array_right, np.ndarray) and (from_medial == True or from_medial == False):
-            left_copy = np.copy(binary_mask_array_left)
-            right_copy = np.copy(binary_mask_array_right)
-            mask_w_ones = np.ones_like(left_copy)
+        logger.debug("Making a copy of the masks.")
+        left_copy = np.copy(binaryMaskArrayLeft)
+        right_copy = np.copy(binaryMaskArrayRight)
+        mask_w_ones = np.ones_like(left_copy)
 
-            if from_medial:
-                most_medial_left =  []
-                most_medial_right = []
-                
-                for slice in right_copy:
-                    for index in range(np.shape(slice)[1]):
-                        column = slice[:,index]
-                        most_medial_in_slice = 0
-                        if 1 in column:
-                            if index > most_medial_in_slice:
-                                most_medial_in_slice = index
-                        most_medial_right.append(most_medial_in_slice)
-                            
-                for slice in left_copy:
-                    for index in range(np.shape(slice)[1]):
-                        column = slice[:,index]
-                        if 1 in column:
-                            most_medial_in_slice = index
-                            most_medial_left.append(most_medial_in_slice)
-                            break
-                
-                mask_w_ones[:,:, min(most_medial_left):] = 0
-                mask_w_ones[:,:, : max(most_medial_right) + 1] = 0
+        if fromMedial:
+            logger.debug("Creating the mask from the medial direction.")
+            most_medial_left = []
+            most_medial_right = []
 
+            for slice in right_copy:
+                logger.debug("Finding the most medial slice in the right mask.")
+                for index in range(np.shape(slice)[1]):
+                    column = slice[:, index]
+                    most_medial_in_slice = 0
+                    if 1 in column and index > most_medial_in_slice:
+                        most_medial_in_slice = index
+                    most_medial_right.append(most_medial_in_slice)
 
-            elif from_medial == False:
-                most_lateral_left =  []
-                most_lateral_right = []
-                
-                for slice in right_copy:
-                    for index in range(np.shape(slice)[1]):
-                        column = slice[:,index]
-                        if 1 in column:
-                            most_lateral_right.append(index)
-                            break
-                            
-                for slice in left_copy:
-                    for index in range(np.shape(slice)[1]):
-                        column = slice[:,index]
-                        most_lateral_in_slice= 0
-                        if 1 in column:
-                            if index > most_lateral_in_slice:
-                                most_lateral_in_slice = index
-                        most_lateral_left.append(most_lateral_in_slice)
+            for slice in left_copy:
+                logger.debug("Finding the most medial slice in the left mask.")
+                for index in range(np.shape(slice)[1]):
+                    column = slice[:, index]
+                    if 1 in column:
+                        most_medial_in_slice = index
+                        most_medial_left.append(most_medial_in_slice)
+                        break
 
-                mask_w_ones[:,:, max(most_medial_left) + 1:] = 0
-                mask_w_ones[:,:, : max(most_medial_right)] = 0
+            logger.debug("Developing the new mask.")
+            mask_w_ones[:, :, min(most_medial_left):] = 0
+            mask_w_ones[:, :, :max(most_medial_right) + 1] = 0
 
-            return(mask_w_ones)
-    
         else:
-            if isinstance(binary_mask_array_left, np.ndarray) and isinstance(binary_mask_array_right, np.ndarray):
-                raise Exception("The from_medial parameter must be a boolean.")
-            elif isinstance(binary_mask_array_left, np.ndarray):
-                raise Exception("The binary_mask_array_right parameter must be a numpy.ndarray.")
-            elif isinstance(binary_mask_array_right, np.ndarray):
-                raise Exception("The binary_mask_array_left parameter must be a numpy.ndarray.")
+            logger.debug("Creating the mask from the lateral direction.")
+            most_lateral_left = []
+            most_lateral_right = []
+
+            for slice in right_copy:
+                logger.debug("Finding the most lateral slice in the right mask.")
+                for index in range(np.shape(slice)[1]):
+                    column = slice[:, index]
+                    if 1 in column:
+                        most_lateral_right.append(index)
+                        break
+
+            for slice in left_copy:
+                logger.debug("Finding the most lateral slice in the left mask.")
+                for index in range(np.shape(slice)[1]):
+                    column = slice[:, index]
+                    most_lateral_in_slice = 0
+                    if 1 in column and index > most_lateral_in_slice:
+                        most_lateral_in_slice = index
+                    most_lateral_left.append(most_lateral_in_slice)
+
+            logger.debug("Developing the new mask.")
+            mask_w_ones[:, :, max(most_lateral_left) + 1:] = 0
+            mask_w_ones[:, :, :max(most_lateral_right)] = 0
+
+        return mask_w_ones
 
     except Exception as e:
         logger.exception(e)
+        raise
 
 
-def crop_anterior(binary_mask_to_be_cropped, reference_mask, from_anterior=True):
+def crop_anterior(binaryMaskToCrop, referenceMask, fromAnterior=True):
     """
     Crops a binary mask from the anterior.
     
     Parameters
     ----------
-    binary_mask_to_be_cropped : numpy.ndarray
+    binaryMaskToCrop : numpy.ndarray
                 The binary mask to be cropped.
-    reference_mask : numpy.ndarray
+    referenceMask : numpy.ndarray
                 The reference mask to be used for cropping.
-    from_anterior : bool, default: True
+    fromAnterior : bool, default: True
                 Specification to crop the binary mask from the anterior.
                 
     Returns
@@ -1019,53 +841,51 @@ def crop_anterior(binary_mask_to_be_cropped, reference_mask, from_anterior=True)
     numpy.ndarray
         The cropped binary mask.
     """
+    if not isinstance(binaryMaskToCrop, np.ndarray):
+        raise Exception("The binaryMaskToCrop parameter must be a numpy.ndarray.")
+    if not isinstance(referenceMask, np.ndarray):
+        raise Exception("The referenceMask parameter must be a numpy.ndarray.")
+    if not isinstance(fromAnterior, bool):
+        raise Exception("The fromAnterior parameter must be a boolean.")
+
     try:
-        if isinstance(binary_mask_to_be_cropped, np.ndarray) and isinstance(reference_mask, np.ndarray) and (from_anterior == True or from_anterior == False):
-            binary_mask = np.copy(binary_mask_to_be_cropped)
-            reference_mask_copy = np.copy(reference_mask)
+        logger.debug("Making a copy of the masks.")
+        binary_mask = np.copy(binaryMaskToCrop)
+        referenceMask_copy = np.copy(referenceMask)
 
-            if from_anterior:
-                most_anterior =  []
+        if fromAnterior:
+            lo
+            most_anterior = []
 
-                for slice in reference_mask_copy:
-                    for index in range(np.shape(slice)[0]):
-                        row = slice[index,:]
-                        if 1 in row:
-                            most_anterior.append(index)
-                            break
+            for slice in referenceMask_copy:
+                for index in range(np.shape(slice)[0]):
+                    row = slice[index, :]
+                    if 1 in row:
+                        most_anterior.append(index)
+                        break
 
-                binary_mask[:, min(most_anterior):,:] = 0
+            binary_mask[:, min(most_anterior):, :] = 0
 
-
-            elif from_anterior == False:
-                most_posterior =  []
-                
-                for slice in reference_mask_copy:
-                    for index in range(np.shape(slice)[0]):
-                        row = slice[index,:]
-                        most_posterior_in_slice = 0
-                        if 1 in row:
-                            if index > most_posterior_in_slice:
-                                most_posterior_in_slice = index
-                        most_posterior.append(most_posterior_in_slice)
-
-                binary_mask[:,: max(most_posterior),:] = 0
-
-            return(binary_mask)
-    
         else:
-            if isinstance(binary_mask_to_be_cropped, np.ndarray) and isinstance(reference_mask, np.ndarray):
-                raise Exception("The from_anterior parameter must be a boolean.")
-            elif isinstance(binary_mask_to_be_cropped, np.ndarray):
-                raise Exception("The reference_mask parameter must be a numpy.ndarray.")
-            elif isinstance(reference_mask, np.ndarray):
-                raise Exception("The binary_mask_to_be_cropped parameter must be a numpy.ndarray.")
+            most_posterior = []
+
+            for slice in referenceMask_copy:
+                for index in range(np.shape(slice)[0]):
+                    row = slice[index, :]
+                    most_posterior_in_slice = 0
+                    if 1 in row and index > most_posterior_in_slice:
+                        most_posterior_in_slice = index
+                    most_posterior.append(most_posterior_in_slice)
+
+            binary_mask[:, :max(most_posterior), :] = 0
+
+        return binary_mask
 
     except Exception as e:
         logger.exception(e)
 
 
-def remove_roi_from_mask(binary_mask_array, Tuple_of_masks_to_remove, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
+def remove_multiple_rois_from_mask(binary_mask_array, Tuple_of_masks_to_remove, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
     """
     Removes a region of interest from a binary mask.
     
@@ -1353,7 +1173,7 @@ def crop_superior_to_slice(main_mask, slice_number):
         logger.exception(e)
 
 
-def crop_posterior_from_slice_number(binary_mask_array, slice_number, tuple_of_masks, from_anterior=True, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
+def crop_posterior_from_slice_number(binary_mask_array, slice_number, tuple_of_masks, fromAnterior=True, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
     """
     This function crops a binary mask posteriorly from the most anterior or posterior row in a mask called tuple of masks. The mask to be cropped is called binary_mask_array.
 
@@ -1365,7 +1185,7 @@ def crop_posterior_from_slice_number(binary_mask_array, slice_number, tuple_of_m
                 The slice number to crop from.
     tuple_of_masks : tuple[numpy.ndarray]
                 The masks to be used for cropping.
-    from_anterior : bool, default: True
+    fromAnterior : bool, default: True
                 Specification to crop the binary mask from the anterior.
     segmentationNode : slicer.vtkMRMLSegmentationNode, default: None
                 The segmentation node to add the cropped binary mask to. Only needed if adding the segmentation to a node.
@@ -1383,10 +1203,10 @@ def crop_posterior_from_slice_number(binary_mask_array, slice_number, tuple_of_m
     """
 
     try:
-        if isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int) and isinstance(tuple_of_masks, tuple) and isinstance(from_anterior, bool) and isinstance(add_segmentation_to_node, bool):
+        if isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int) and isinstance(tuple_of_masks, tuple) and isinstance(fromAnterior, bool) and isinstance(add_segmentation_to_node, bool):
             binary_mask = np.copy(binary_mask_array)
     
-            if from_anterior:
+            if fromAnterior:
                 most_anterior =  []
 
                 for mask in tuple_of_masks:
@@ -1402,7 +1222,7 @@ def crop_posterior_from_slice_number(binary_mask_array, slice_number, tuple_of_m
                 binary_mask[:, : min(most_anterior),:] = 0
 
 
-            elif from_anterior == False:
+            elif fromAnterior == False:
                 most_posterior =  []
 
                 for mask in tuple_of_masks:
@@ -1434,7 +1254,7 @@ def crop_posterior_from_slice_number(binary_mask_array, slice_number, tuple_of_m
 
         else:
             if isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int) and isinstance(tuple_of_masks, tuple):
-                raise Exception("The from_anterior parameter must be a boolean.")
+                raise Exception("The fromAnterior parameter must be a boolean.")
             elif isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int):
                 raise Exception("The tuple_of_masks parameter must be a tuple.")
             elif isinstance(tuple_of_masks, tuple):
@@ -1444,7 +1264,7 @@ def crop_posterior_from_slice_number(binary_mask_array, slice_number, tuple_of_m
         logger.exception(e)
 
 
-def crop_anterior_from_slice_number(binary_mask_array, slice_number, tuple_of_masks, from_anterior=True, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
+def crop_anterior_from_slice_number(binary_mask_array, slice_number, tuple_of_masks, fromAnterior=True, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
     """
     This function crops a binary mask anteriorly from the most anterior or posterior row in a mask called tuple of masks. The mask to be cropped is called binary_mask_array.
     
@@ -1456,7 +1276,7 @@ def crop_anterior_from_slice_number(binary_mask_array, slice_number, tuple_of_ma
                 The slice number to crop from.
     tuple_of_masks : tuple[numpy.ndarray]
                 The masks to be used for cropping.
-    from_anterior : bool, default: True
+    fromAnterior : bool, default: True
                 Specification to crop the binary mask from the anterior.
     segmentationNode : slicer.vtkMRMLSegmentationNode, default: None
                 The segmentation node to add the cropped binary mask to. Only needed if adding the segmentation to a node.
@@ -1473,10 +1293,10 @@ def crop_anterior_from_slice_number(binary_mask_array, slice_number, tuple_of_ma
         The cropped binary mask.
     """
     try:
-        if isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int) and isinstance(tuple_of_masks, tuple) and isinstance(from_anterior, bool) and isinstance(add_segmentation_to_node, bool):
+        if isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int) and isinstance(tuple_of_masks, tuple) and isinstance(fromAnterior, bool) and isinstance(add_segmentation_to_node, bool):
             binary_mask = np.copy(binary_mask_array)
     
-            if from_anterior:
+            if fromAnterior:
                 most_anterior =  []
 
                 for mask in tuple_of_masks:
@@ -1491,7 +1311,7 @@ def crop_anterior_from_slice_number(binary_mask_array, slice_number, tuple_of_ma
                 binary_mask[:, min(most_anterior):,:] = 0
 
 
-            elif from_anterior == False:
+            elif fromAnterior == False:
                 most_posterior =  []
 
                 for mask in tuple_of_masks:
@@ -1523,7 +1343,7 @@ def crop_anterior_from_slice_number(binary_mask_array, slice_number, tuple_of_ma
 
         else:
             if isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int) and isinstance(tuple_of_masks, tuple):
-                raise Exception("The from_anterior parameter must be a boolean.")
+                raise Exception("The fromAnterior parameter must be a boolean.")
             elif isinstance(binary_mask_array, np.ndarray) and isinstance(slice_number, int):
                 raise Exception("The tuple_of_masks parameter must be a tuple.")
             elif isinstance(tuple_of_masks, tuple):
@@ -1618,7 +1438,7 @@ def get_most_superior_slice(tuple_of_masks):
 
 
 
-def crop_posterior_from_distance(binary_mask, reference_mask, number_of_pixels, from_anterior=True, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
+def crop_posterior_from_distance(binary_mask, referenceMask, number_of_pixels, fromAnterior=True, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
     """
     Crops a binary mask from the anterior direction from a specified distance.
     
@@ -1630,7 +1450,7 @@ def crop_posterior_from_distance(binary_mask, reference_mask, number_of_pixels, 
                 The reference mask to be used for cropping.
     number_of_pixels : int
                 The number of pixels to crop from.
-    from_anterior : bool, default: True
+    fromAnterior : bool, default: True
                 Specification to crop the binary mask from the anterior.
     segmentationNode : slicer.vtkMRMLSegmentationNode, default: None
                 The segmentation node to add the cropped binary mask to. Only needed if adding the segmentation to a node.
@@ -1647,14 +1467,14 @@ def crop_posterior_from_distance(binary_mask, reference_mask, number_of_pixels, 
         The cropped binary mask.
     """
     try:
-        if isinstance(binary_mask, np.ndarray) and isinstance(reference_mask, np.ndarray) and isinstance(number_of_pixels, int) and (from_anterior == True or from_anterior == False):
+        if isinstance(binary_mask, np.ndarray) and isinstance(referenceMask, np.ndarray) and isinstance(number_of_pixels, int) and (fromAnterior == True or fromAnterior == False):
             binary_mask = np.copy(binary_mask)
 
 
-            if from_anterior:
+            if fromAnterior:
                 most_anterior =  []
 
-                for slice in reference_mask:
+                for slice in referenceMask:
                     for index in range(np.shape(slice)[0]):
                         row = slice[index,:]
                         if 1 in row:
@@ -1664,10 +1484,10 @@ def crop_posterior_from_distance(binary_mask, reference_mask, number_of_pixels, 
                 binary_mask[:, : min(most_anterior) - number_of_pixels,:] = 0
 
 
-            elif from_anterior == False:
+            elif fromAnterior == False:
                 most_posterior =  []
 
-                for slice in reference_mask:
+                for slice in referenceMask:
                     for index in range(np.shape(slice)[0]):
                         row = slice[index,:]
                         most_posterior_in_slice = 0
@@ -1692,11 +1512,11 @@ def crop_posterior_from_distance(binary_mask, reference_mask, number_of_pixels, 
             return binary_mask
     
         else:
-            if isinstance(binary_mask, np.ndarray) and isinstance(reference_mask, np.ndarray) and isinstance(number_of_pixels, int):
-                raise Exception("The from_anterior parameter must be a boolean.")
-            elif isinstance(binary_mask, np.ndarray) and isinstance(reference_mask, np.ndarray):
+            if isinstance(binary_mask, np.ndarray) and isinstance(referenceMask, np.ndarray) and isinstance(number_of_pixels, int):
+                raise Exception("The fromAnterior parameter must be a boolean.")
+            elif isinstance(binary_mask, np.ndarray) and isinstance(referenceMask, np.ndarray):
                 raise Exception("The number_of_pixels parameter must be an integer.")
-            elif isinstance(reference_mask, np.ndarray) and isinstance(number_of_pixels, int):
+            elif isinstance(referenceMask, np.ndarray) and isinstance(number_of_pixels, int):
                 raise Exception("The binary_mask parameter must be a numpy.ndarray.")
             
     except Exception as e:
@@ -1745,7 +1565,7 @@ def get_border_from_width_of_mask_saggital(mask, percentage):
         logger.exception(e)
 
 
-def create_binary_mask_between_slices(reference_mask_array, left_bound, right_bound, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
+def create_binary_mask_between_slices(referenceMask_array, left_bound, right_bound, segmentationNode=None, volumeNode=None, volume_name=None, add_segmentation_to_node=False):
     """
     Creates a binary mask between two slice numbers.
     
@@ -1763,7 +1583,7 @@ def create_binary_mask_between_slices(reference_mask_array, left_bound, right_bo
     """
     try:
         if isinstance(left_bound, int) and isinstance(right_bound, int):
-            mask_w_ones = np.ones_like(reference_mask_array)
+            mask_w_ones = np.ones_like(referenceMask_array)
 
             mask_w_ones[:,:, : right_bound] = 0
             mask_w_ones[:,:, left_bound :] = 0
