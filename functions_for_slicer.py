@@ -286,7 +286,7 @@ def margin_editor_effect(segmentName, newName, segmentationNode, volumeNode, ope
     operation : str, default: 'Grow'
                 The operation to perform on the segment. Must be 'Grow' or 'Shrink'.
     MarginSize : float, default: 10.0
-                The number of voxels to dilate or shrink the segment by.
+                The distance in milimeters to dilate or shrink the segment by.
 
     Returns
     -------
