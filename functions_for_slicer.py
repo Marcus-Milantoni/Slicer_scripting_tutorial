@@ -1228,7 +1228,7 @@ def save_image_from_scalar_volume_node(outputFolder, scalarVolumeNode, outputFil
     saveStorageNode.WriteData(scalarVolumeNode)
 
 
-def save_rtstructs_as_nii(output_folder, segmentation_to_save):
+def save_rtstructs_as_nii(outputFolder, segmentationNode, segmentationsToSave):
     """
     Save the segmentation to the output folder as a .nii file.
     
@@ -1236,86 +1236,88 @@ def save_rtstructs_as_nii(output_folder, segmentation_to_save):
     ----------
     output_folder : str
                 The folder to save the .nii file to.
-    segmentation_to_save : list[str]
+    segmentationsToSave : tuple[str]
                 The segmentations to save.
                 
     Returns
     -------
     None
+
+    raises
+    ------
+    TypeError
+        If the outputFolder is not a string.
+        If the segmentationNode is not a slicer.vtkMRMLSegmentationNode
+        If the segmentationsToSave is not a tuple.
+        If the segmentationsToSave contains an element that is not a string.
     """
-    segmentationNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentationNode")
-    segmentation = segmentationNode.GetSegmentation()
+
+    if not isinstance(outputFolder, str):
+        raise TypeError("The outputFolder parameter must be a string.")
+    if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+        raise TypeError("The segmentationNode parameter must be a slicer.vtkMRMLSegmentationNode")
+    if not isinstance(segmentationsToSave, tuple):
+        raise TypeError("The nodeTypesToSave parameter must be a tuple.")
+    if not all(isinstance(nodeType, str) for nodeType in segmentationsToSave):
+        raise TypeError("The nodeTypesToSave parameter must contain only strings.")
+    
+    if not os.path.exists(outputFolder):
+        logger.debug(f"Creating the output folder {outputFolder}")
+        os.makedirs(outputFolder)
 
     # Create a vtkStringArray outside the loop
     segmentIds = vtk.vtkStringArray()
 
-    for segment in segmentation_to_save:
-        segmentation_id_to_save = segmentation.GetSegmentIdBySegmentName(segment)
+    for segment in segmentationsToSave:
+        segmentation_id_to_save = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(segment)
         # Add each segment ID to the vtkStringArray
         segmentIds.InsertNextValue(segmentation_id_to_save)
 
     # Call the export function once, after the loop
-    slicer.vtkSlicerSegmentationsModuleLogic.ExportSegmentsBinaryLabelmapRepresentationToFiles(output_folder, segmentationNode, segmentIds, ".nii", False)
+    slicer.vtkSlicerSegmentationsModuleLogic.ExportSegmentsBinaryLabelmapRepresentationToFiles(outputFolder, segmentationNode, segmentIds, ".nii", False)
 
 
-def max_distance(matrix):
+def find_max_distance_in_2D(binaryMask):
     """
-    Finds the maximum distance between two pixels in a 2D binary mask.
+    Finds the maximum distance between two pixels in a 2D binary mask. If you want to find the max distance in a plane of a binary mask, 
     
     Parameters
     ----------
-    matrix : numpy.ndarray
+    binaryMask : numpy.ndarray
                 The binary mask to find the maximum distance in. Must be a 2D array.
     
     Returns
     -------
     float
-        The maximum distance between two pixels in the binary mask.
+        The maximum distance between two pixels in the binary mask. Zero if no mask is found.
+
+    Raises
+    ------
+    TypeError
+        If the binaryMask is not a np.ndarray
     """
-    coords = np.where(matrix == 1)
-    if not coords[0].size or not coords[1].size:
-        return 0  # Return 0 if no pixels are found
-
-    min_x, max_x = np.min(coords[0]), np.max(coords[0])
-    min_y, max_y = np.min(coords[1]), np.max(coords[1])
-
-    max_dist = np.sqrt((max_x - min_x) ** 2 + (max_y - min_y) ** 2)
-
-    return max_dist
-
-
-def find_first_aortic_arch(aortic_matrix):
-    """
-    Finds the first slice with an aortic arch in a binary mask array.
+    if not isinstance(binaryMask, np.ndarray):
+        raise TypeError("The parameter binaryMask must be a np.ndarray")
     
-    Parameters
-    ----------
-    aortic_matrix : numpy.ndarray
-                The binary mask array to find the first aortic arch in.
-    
-    Returns
-    -------
-    int
-        The first slice with an aortic arch.
-    """
     try:
-        if isinstance(aortic_matrix, np.ndarray):
-            aortic_copy = np.copy(aortic_matrix)
+        # get the location of all the ones
+        coords = np.where(binaryMask == 1)
+        if not coords[0].size or not coords[1].size:
+            return 0  # Return 0 if no pixels are found
 
-            for index, slice in enumerate(aortic_copy):
-                if 1 in slice:
-                    max_dist = max_distance(slice)
-                    if max_dist > 70:
-                        return index
-                    
-        else:
-            raise Exception("The aortic_matrix parameter must be a numpy.ndarray.")
-        
-    except Exception as e:
-        logger.exception(e)
+        min_x, max_x = np.min(coords[0]), np.max(coords[0])
+        min_y, max_y = np.min(coords[1]), np.max(coords[1])
+
+        max_dist = np.sqrt((max_x - min_x) ** 2 + (max_y - min_y) ** 2)
+
+        return max_dist
+    
+    except Exception:
+        logger.exception("An error occurred in find_max_distance_in_2D")
+        raise
 
 
-def crop_inferior_from_sliceNumber(binary_mask_array, sliceNumber, include_slice=True):
+def crop_inferior_to_slice(binaryMaskArray, sliceNumber, includeSlice=True):
     """
     Crops the given binary mask array to remove all slices inferior to the specified slice number.
     This function allows for selective cropping where the user can choose to include or exclude the slice
@@ -1324,13 +1326,13 @@ def crop_inferior_from_sliceNumber(binary_mask_array, sliceNumber, include_slice
 
     Parameters
     ----------
-    binary_mask_array : numpy.ndarray
+    binaryMaskArray : numpy.ndarray
         The binary mask to be cropped. It should be a 3D array where each slice along the first dimension
         represents a 2D binary mask.
     sliceNumber : int
         The slice number from which the cropping should start. Slices inferior to this number will be
         modified based on the value of `include_slice`.
-    include_slice : bool, optional
+    includeSlice : bool, optional
         A flag to determine whether the slice specified by `sliceNumber` should be included in the
         cropping operation. If True, the specified slice and all slices superior to it will remain
         unchanged, while all inferior slices will be set to 0. If False, the specified slice will also
@@ -1344,34 +1346,39 @@ def crop_inferior_from_sliceNumber(binary_mask_array, sliceNumber, include_slice
 
     Raises
     ------
-    Exception
-        If `binary_mask_array` is not a numpy.ndarray or `sliceNumber` is not an integer, or if
-        `include_slice` is not a boolean value, an exception is raised with an appropriate error message.
+    TypeError
+        If binaryMaskArray is not a np.ndarray
+        If sliceNumber is not an int
+        If includeSlice is not a bool
     """
+    if not isinstance(binaryMaskArray, np.ndarray):
+        raise TypeError("The parameter binaryMaskArray must be a np.ndarray")
+    if not isinstance(sliceNumber, int):
+        raise TypeError("The parameter sliceNumber must be an int")
+    if not isinstance(includeSlice, bool):
+        raise TypeError("The parameter includeSlice must be a bool")
+    
+    # fix an exception here
+    ### if not 
+    
     try:
-        if isinstance(binary_mask_array, np.ndarray) and isinstance(sliceNumber, int) and (include_slice == True or include_slice == False):
-            binary_mask = np.copy(binary_mask_array)
-            
-            if include_slice:
-                for index, slice in enumerate(binary_mask):
-                    if index >= sliceNumber:
-                        slice[slice == 1] = 0
-
-            elif not include_slice:
-                for index, slice in enumerate(binary_mask):
-                    if index > sliceNumber:
-                        slice[slice == 1] = 0
-
-            return(binary_mask)
+        binary_mask = np.copy(binaryMaskArray) #Make a copy of the mask array as we are working in place
         
-        else:
-            if isinstance(binary_mask_array, np.ndarray):
-                raise Exception("The sliceNumber parameter must be an integer.")
-            elif isinstance(sliceNumber, int):
-                raise Exception("The binary_mask_array parameter must be a numpy.ndarray.")
-            
-    except Exception as e:
-        logger.exception(e)
+        if includeSlice:
+            for index, slice in enumerate(binary_mask):
+                if index >= sliceNumber:
+                    slice[slice == 1] = 0
+
+        elif not includeSlice:
+            for index, slice in enumerate(binary_mask):
+                if index > sliceNumber:
+                    slice[slice == 1] = 0
+
+        return(binary_mask)
+
+    except Exception:
+        logger.exception("An error occurred in crop_inferior_to_slice")
+        raise
 
 
 def crop_superior_to_slice(main_mask, sliceNumber):
