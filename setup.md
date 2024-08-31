@@ -13,15 +13,16 @@ Please follow the steps provided bellow:
 ## Set up the SlicerJupyter
 
 1. Using the search widget in Slicer, open the SlicerJupyter extension by searching for JupyterKernel.
+2. 
 ![The Slicer application on the SlicerJupyter Modules!](/images/SlicerJupyterScreenCapture.png)
-2. Click the "Start Jupyter Server" button. A JupyterLab notebook will open when the setup is complete.
-3. Click the "Jupyter server in external Python environment" and copy the command to clipboard.
-4. Open the anaconda prompt (Terminal if on mac) and paste the command.
-5. (Optional) open an external environment (Visual Studio Code) and select the Slicer kernel!
+3. Click the "Start Jupyter Server" button. A JupyterLab notebook will open when the setup is complete.
+4. Click the "Jupyter server in external Python environment" and copy the command to clipboard.
+5. Open the anaconda prompt (Terminal if on mac) and paste the command.
+6. (Optional) open an external environment (Visual Studio Code) and select the Slicer kernel!
 
 ## Install python packages
 
 1. Open the Python console by clicking the python logo on the widget bar.
-2. Import pip with ''import pip''.
-3. install the packages with ''pip.main(['install', 'my_package'])''.
+2. Import pip with ~~~import pip~~~.
+3. install the packages with ~~~pip.main(['install', 'my_package'])~~~.
     - Find the requirements in the [requirements.txt](/requirements.txt) file.
