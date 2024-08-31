@@ -1,10 +1,17 @@
 # Slicer_tutorial
-A repository built for the slicer tutorial run by Edward Wang and Marcus Milantoni.
+A repository built for the slicer tutorial run by Marcus Milantoni and Edward Wang.
 
 ## Table of Contents
 - [Requirements](#Requirements)
+- [Setup](#Setup)
 - [Code Description](#Description)
 - [Example patients](#Examples)
+
+## Requirements
+numpy
+matplotlib
+
+## Setup
 
 ## [Examples](example_patients)
 A list of all the the example patients provided.
