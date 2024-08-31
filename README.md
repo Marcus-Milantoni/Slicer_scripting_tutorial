@@ -8,10 +8,8 @@ A repository built for the slicer tutorial run by Marcus Milantoni and Edward Wa
 - [Example patients](#Examples)
 
 ## Requirements
-
-numpy
-
-matplotlib
+- numpy
+- matplotlib
 
 The full list can be found in [requirements.txt](/requirements.txt)
 
@@ -29,7 +27,9 @@ Please follow the steps provided bellow:
 ### Set up the SlicerJupyter
 
 1. Using the search widget in Slicer, open the SlicerJupyter extension by searching for JupyterKernel.
-![The Slicer application on the SlicerJupyter Modules!](/images/SlicerJupyterScreenCapture.png)
+
+
+    ![The Slicer application on the SlicerJupyter Modules!](/images/SlicerJupyterScreenCapture.png)
 2. Click the "Start Jupyter Server" button. A JupyterLab notebook will open when the setup is complete.
 3. Click the "Jupyter server in external Python environment" and copy the command to clipboard.
 4. Open the anaconda prompt (Terminal if on mac) and paste the command.
