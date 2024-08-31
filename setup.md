@@ -23,6 +23,12 @@ Please follow the steps provided bellow:
 ## Install python packages
 
 1. Open the Python console by clicking the python logo on the widget bar.
-2. Import pip with ~~~import pip~~~.
-3. install the packages with ~~~pip.main(['install', 'my_package'])~~~.
+2. Import pip with
+     ~~~
+     import pip
+     ~~~
+4. install the packages with
+    ~~~
+    pip.main(['install', 'my_package'])
+    ~~~
     - Find the requirements in the [requirements.txt](/requirements.txt) file.
