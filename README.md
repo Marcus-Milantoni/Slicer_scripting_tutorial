@@ -1,6 +1,9 @@
 # Slicer_tutorial
 A repository built for the slicer tutorial run by Marcus Milantoni and Edward Wang.
 
+
+![Banner image!](/images/SlicerTutorialBanner.jpeg)
+
 ## Table of Contents
 - [Requirements](#Requirements)
 - [Setup](#Setup)
