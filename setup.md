@@ -24,11 +24,11 @@ Please follow the steps provided bellow:
 
 1. Open the Python console by clicking the python logo on the widget bar.
 2. Import pip with
-     ~~~
+     ~~~ python
      import pip
      ~~~
 4. install the packages with
-    ~~~
+    ~~~ python
     pip.main(['install', 'my_package'])
     ~~~
     - Find the requirements in the [requirements.txt](/requirements.txt) file.
