@@ -1078,6 +1078,70 @@ def bitwise_and_from_array(mask1, mask2, addSegmentationToNode=False, segmentati
     return combined_mask
 
 
+def bitwise_or_from_array(mask1, mask2, addSegmentationToNode=False, segmentationNode=None, volumeNode=None, segmentName=None):
+    """
+    Combines two binary masks. This function uses numpy's bitwise_or function to combine the masks. The function can also add the combined mask to a segmentation node.
+
+    Parameters
+    ----------
+    mask1 : numpy.ndarray
+             The first binary mask.
+    mask2 : numpy.ndarray
+             The second binary mask.
+    addSegmentationToNode : bool, default: False
+                Specification to add the combined mask to a segmentation node.
+    segmentationNode : vtkMRMLSegmentationNode
+                The segmentation node to add the combined mask to.
+    volumeNode : vtkMRMLScalarVolumeNode
+                The volume node that the segmentation node is based on. 
+    segmentName : str
+                The name of the segment to add the combined mask to.
+               
+    Returns
+    -------
+    numpy.ndarray
+        The combined binary mask.
+    
+    Raises
+    ------
+    TypeError
+        If the mask1 is not a numpy array.
+        If the mask2 is not a numpy array.
+        If the segmentationNode is not a vtkMRMLSegmentationNode.
+        If the volumeNode is not a vtkMRMLScalarVolumeNode.
+        If the segmentName is not a string.
+    ValueError
+        If the mask1 and mask2 do not have the same shape
+    """
+    if not isinstance(mask1, np.ndarray):
+        raise TypeError("The mask1 parameter must be a numpy.ndarray.")
+    if not isinstance(mask2, np.ndarray):
+        raise TypeError("The mask2 parameter must be a numpy.ndarray.")
+    if not mask1.shape == mask2.shape:
+        raise ValueError("The mask1 and mask2 parameters must have the same shape.")
+    
+    try:
+        logger.info(f"Combining masks")
+        combined_mask = np.bitwise_or(mask1, mask2)
+
+    except Exception:
+        logger.exception("An error occurred in bitwise_or_from_array")
+        raise
+            
+    if addSegmentationToNode:
+        if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
+            raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
+        if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
+            raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
+        if not isinstance(segmentName, str):
+            raise TypeError("The segmentName parameter must be a string.")
+
+        logger.debug(f"Adding the combined mask to the segmentation node {segmentationNode}")
+        add_segmentation_array_to_node(segmentationNode, combined_mask, segmentName, volumeNode)
+
+    return combined_mask
+
+
 def remove_multiple_rois_from_mask(binaryMaskArray, tupleOfMasksToRemove, segmentationNode=None, volumeNode=None, volumeName=None, addSegmentationToNode=False):
     """
     Removes a region of interest from a binary mask.
