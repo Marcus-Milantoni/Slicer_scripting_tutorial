@@ -6,6 +6,7 @@ import numpy as np
 import os
 import logging
 import matplotlib.pyplot as plt
+import ScreenCapture
 
 
 # Setup the logger (can customize)
@@ -452,6 +453,138 @@ def dice_similarity(mask1, mask2):
         return 1.0  # Both masks are empty
 
     return 2.0 * intersection / sum_masks
+
+
+def sweep_screen_capture(backgroundImageNode, savePath, saveName, tupleOfSegmentationNodesToShow=None, view='axial', frameRate=None, startSweepOffset=None, endSweepOffset=None, foregroundImageNode=None, foregroundOpacity=None, numberOfImages= None, ):
+    """
+    This function captures a sweep of images from a volume node and saves them as a video to a specified location.
+
+    Parameters:
+    ------------
+    backgroundImageNode: vtkMRMLScalarVolumeNode
+        The volume node to capture the images from.
+    savePath: str
+        The path to save the images to.
+    saveName: str
+        The name to save the images as.
+    tupleOfSegmentationNodesToShow: tuple, optional
+        A tuple of vtkMRMLSegmentationNodes to show in the video. Default is None.
+    view: str, optional
+        The view to capture the images from. Default is 'axial'.
+    frameRate: int or float, optional
+        The frame rate of the video. Default is None.
+    startSweepOffset: int or float, optional
+        The offset to start the sweep from. Default is None.
+    endSweepOffset: int or float, optional
+        The offset to end the sweep at. Default is None.
+    foregroundImageNode: vtkMRMLScalarVolumeNode, optional
+        The volume node to overlay on the background image. Default is None.
+    foregroundOpacity: int or float, optional
+        The opacity of the foreground image. Default is None.
+    numberOfImages: int, optional
+        The number of images to capture. Default is None. 
+    
+    Returns:
+    ---------
+    None
+    """
+    if not isinstance(backgroundImageNode, slicer.vtkMRMLScalarVolumeNode):
+        raise TypeError("backgroundImageNode must be a vtkMRMLScalarVolumeNode")
+    if not isinstance(savePath, str):
+        raise TypeError("savePath must be a string")
+    if not isinstance(saveName, str):
+        raise TypeError("saveName must be a string")
+    if not isinstance(tupleOfSegmentationNodesToShow, tuple) or not tupleOfSegmentationNodesToShow:
+        raise TypeError("tupleOfSegmentationNodesToShow must be a tuple or None")
+    if not isinstance(view, str):
+        raise TypeError("view must be a string")
+    if frameRate is not None and not isinstance(frameRate, (int, float)):
+        raise TypeError("frameRate must be an integer or a float or None.")
+    if startSweepOffset is not None and not isinstance(startSweepOffset, (int, float)):
+        raise TypeError("startSweepOffset must be an integer or a float or None.")
+    if endSweepOffset is not None and not isinstance(endSweepOffset, (int, float)):
+        raise TypeError("endSweepOffset must be an integer or a float or None.")
+    if foregroundImageNode is not None and not isinstance(foregroundImageNode, slicer.vtkMRMLScalarVolumeNode):
+        raise TypeError("ForegroundImageNode must be a vtkMRMLScalarVolumeNode or None")
+    if numberOfImages is not None and not isinstance(numberOfImages, int):
+        raise TypeError("numberOfImages must be an integer")
+    if foregroundOpacity is not None and not isinstance(foregroundOpacity, (int, float)):
+        raise TypeError("foregroundOpacity must be an integer or a float or None.")
+
+    if foregroundOpacity is not None and not 0 <= foregroundOpacity <= 1:
+        raise ValueError("foregroundOpacity must be between 0 and 1")
+    if not view.lower() in ['axial', 'sagittal', 'coronal']:
+        raise ValueError("view must be either 'axial', 'sagittal' or 'coronal'")
+    if not all(isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode) for segmentationNode in tupleOfSegmentationNodesToShow):
+        raise ValueError("All elements of tupleOfSegmentationNodesToShow must be vtkMRMLSegmentationNodes")
+    if frameRate is not None and not 0 <= frameRate <= 60:
+        raise ValueError("frameRate must be between 0 and 60 frames per second")
+    
+    # Create the save path if it does not exist
+    if not os.path.exists(savePath):
+        os.makedirs(savePath)
+
+    # Set the index for the desired view
+    logger.debug(f"Setting the view to {view}")
+    if view.lower() == 'axial':
+        index = 2
+        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeRed")
+    elif view.lower() == 'sagittal':
+        index = 0
+        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeYellow")
+    elif view.lower() == 'coronal':
+        index = 1
+        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeGreen")
+
+    # set the start and end sweep offsets if none are provided
+    if not startSweepOffset:
+        logger.debug("No start sweep offset provided, setting it to the start of the volume")
+        if index == 2:
+            startSweepOffset = round(backgroundImageNode.GetOrigin()[index], 2)
+        else:
+            startSweepOffset = round(backgroundImageNode.GetOrigin()[index] - backgroundImageNode.GetSpacing()[index] * (backgroundImageNode.GetImageData().GetDimensions()[index]-1), 2)
+    
+    if not endSweepOffset:
+        logger.debug("No end sweep offset provided, setting it to the end of the volume")
+        if index == 2:
+            endSweepOffset = round(backgroundImageNode.GetOrigin()[index] + backgroundImageNode.GetSpacing()[index] * (backgroundImageNode.GetImageData().GetDimensions()[index]-1), 2)
+        else:
+            round(backgroundImageNode.GetOrigin()[index], 2)
+
+    if not numberOfImages:
+        logger.debug("No number of images provided, setting it to the number of slices in the volume")
+        numberOfImages = backgroundImageNode.GetImageData().GetDimensions()[index] - 1 # Set the number of images to the number of slices in the volume
+
+    if not frameRate:
+        logger.debug("No frame rate provided, setting it to 6 frames per second")
+        frameRate = 4 # Set the frame rate to 6 frames per second
+
+    # Set the foreground opacity to 50% if none is provided and there is a foreground image
+    if foregroundImageNode and not foregroundOpacity:
+        logger.debug("Foreground image provided but no opacity, setting opacity to 50%")
+        foregroundOpacity = 0.5
+
+    # Set the display to what is desired for the video
+    logger.debug(f"Setting the display for the {view} view")
+    slicer.util.setSliceViewerLayers(background=backgroundImageNode, foreground=foregroundImageNode, foregroundOpacity=foregroundOpacity)
+    for currentSegmentationNode in slicer.util.getNodesByClass("vtkMRMLSegmentationNode"): # Hide all segmentations
+        currentSegmentationNode.GetDisplayNode().SetVisibility(False)
+    if tupleOfSegmentationNodesToShow:
+        for currentSegmentationNode in tupleOfSegmentationNodesToShow: # Show the desired segmentations
+            currentSegmentationNode.GetDisplayNode().SetVisibility(True)
+
+    # Capture the individual images
+    logger.debug(f"Capturing {numberOfImages} images from {startSweepOffset} to {endSweepOffset} in the {view} view")
+    ScreenCapture.ScreenCaptureLogic().captureSliceSweep(sliceNode, startSweepOffset, endSweepOffset, numberOfImages, savePath, f"{saveName}_%05d.png")
+
+    # create the video freom the images
+    logger.debug(f"Creating video from images at {savePath}/{saveName}.mp4")
+    ScreenCapture.ScreenCaptureLogic().createVideo(frameRate, "-codec libx264 -preset slower -pix_fmt yuv420p", savePath, f"{saveName}_%05d.png", f"{saveName}.mp4")
+
+    # Delete the temporairly saved images after the video is created
+    for imageIndex in range(numberOfImages):
+       logger.debug(f"Deleting {savePath}/{saveName}_{imageIndex:05d}.png")
+       os.remove(os.path.join(savePath, f"{saveName}_{imageIndex:05d}.png"))
 
 
 
