@@ -2268,73 +2268,6 @@ def create_binary_mask_between_slices(referenceMaskArray, leftBound, rightBound,
 # Save functions                                                                #
 #################################################################################
 
-def save_image_from_DICOM_database(outputFolder, nodeTypesToSave = tuple(["vtkMRMLScalarVolumeNode"]), outputFileType=".nii"):
-    """
-    Save the images from the DICOM database to the output folder. The function saves the images as .nii files by default.
-
-    Parameters
-    ----------
-    outputFolder : str
-                The folder to save the images to.
-    nodeTypesToSave : tuple, default: tuple(["vtkMRMLScalarVolumeNode"])
-                The types of nodes to save.
-    outputFileType : str, default: ".nii"
-                The file type to save the images as. The default is ".nii". Other options include ".nrrd".
-
-    Returns
-    -------
-    None
-
-    Raises
-    ------
-    TypeError
-        If the outputFolder is not a string.
-        If the nodeTypesToSave is not a tuple.
-        If the nodeTypesToSave contains an element that is not a string.
-        If the outputFileType is not a string.
-    ValueError
-        If the outputFileType is not ".nii" or ".nrrd".
-    """
-    if not isinstance(outputFolder, str):
-        raise TypeError("The outputFolder parameter must be a string.")
-    if not isinstance(nodeTypesToSave, tuple):
-        raise TypeError("The nodeTypesToSave parameter must be a tuple.")
-    if not all(isinstance(nodeType, str) for nodeType in nodeTypesToSave):
-        raise TypeError("The nodeTypesToSave parameter must contain only strings.")
-    if not isinstance(outputFileType, str):
-        raise TypeError("The outputFileType parameter must be a string.")
-    if not outputFileType in [".nii", ".nrrd"]:
-        raise ValueError("The outputFileType parameter must be either '.nii' or '.nrrd'.")
-    
-    if not os.path.exists(outputFolder):
-        os.makedirs(outputFolder)
-
-    logger.info(f"Saving images from the DICOM database to {outputFolder}")
-    patientUIDs = slicer.dicomDatabase.patients()
-    for patientUID in patientUIDs:
-        logger.debug(f'Loading patient with UID {patientUID}')
-        loadedNodeIDs = DICOMUtils.loadPatientByUID(patientUID)
-        for loadedNodeID in loadedNodeIDs:
-            logger.debug(f'Loaded node with ID {loadedNodeID}')
-            node = slicer.mrmlScene.GetNodeByID(loadedNodeID)
-            if not node:
-                continue
-            if not any(node.IsA(nodeType) for nodeType in nodeTypesToSave):
-                continue
-            logger.debug(f'Found node of type {node.GetClassName()}')
-            logger.debug(f'creating the filename')
-            shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
-            seriesItem = shNode.GetItemByDataNode(node)
-            studyItem = shNode.GetItemParent(seriesItem)
-            patientItem = shNode.GetItemParent(studyItem)
-            filename = shNode.GetItemAttribute(patientItem, 'DICOM.PatientID')
-            filename += '_' + shNode.GetItemAttribute(seriesItem, 'DICOM.Modality')
-            filename = slicer.app.ioManager().forceFileNameValidCharacters(filename) + outputFileType
-            # Save node
-            logger.debug(f'Write {node.GetName()} to {os.path.join(outputFolder, filename)}') 
-            slicer.util.saveNode(node, os.path.join(outputFolder, filename))
-
-
 def save_image_from_scalar_volume_node(outputFolder, scalarVolumeNode, outputFileType=".nii", additionalSaveInfo=None):
     """
     Save the image from the scalar volume node to the output folder. The function saves the image as a .nii file by default.
@@ -2347,6 +2280,8 @@ def save_image_from_scalar_volume_node(outputFolder, scalarVolumeNode, outputFil
                 The scalar volume node to save.
     outputFileType : str, default: ".nii"
                 The file type to save the image as. The default is ".nii". Other options include ".nrrd".
+    additionalSaveInfo : str, default: None
+                Additional information to add to the file name.
 
     Returns
     -------

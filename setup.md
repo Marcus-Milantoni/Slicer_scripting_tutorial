@@ -29,6 +29,6 @@ Please follow the steps provided bellow:
      ~~~
 4. install the packages with
     ~~~ python
-    pip.main(['install', 'my_package'])
+    pip.main(['install', 'requirements.txt'])
     ~~~
     - Find the requirements in the [requirements.txt](/requirements.txt) file.
