@@ -1,14 +1,19 @@
 ![Banner image!](/images/SlicerTutorialBanner.jpeg)
 
 
-# Slicer_tutorial
+# Slicer_scripting_tutorial
 A repository built for the slicer tutorial run by Marcus Milantoni and Edward Wang.
 
 ## Table of Contents
+- [License](#License)
 - [Requirements](#Requirements)
 - [Setup](#Setup)
 - [Tutorial](#Description)
 - [Example patients](#Examples)
+- [Acknowledgements](#Acknowledgements)
+
+## License
+The following repository is under MIT license. For more information, visit [LICENSE](/LICENSE).
 
 ## Requirements
 - numpy
@@ -64,6 +69,11 @@ Juvekar, P., Dorent, R., Kögl, F., Torio, E., Barr, C., Rigolo, L., Galvin, C.,
 
 #### [Cervical Cancer](example_patients/cervical_cancer)
 This dataset is provided by the CC-TUMOR-HETEROGENITY collection on the Cancer Imaging Archive. The dataset includes a PET/CT DICOM of a patient with cervical cancer, and structure RTstructs created using TotalSegmentator. More information can be found [here](https://www.cancerimagingarchive.net/collection/cc-tumor-heterogeneity/).
-
 	
 Mayr, N., Yuh, W. T. C., Bowen, S., Harkenrider, M., Knopp, M. V., Lee, E. Y.-P., Leung, E., Lo, S. S., Small Jr., W., & Wolfson, A. H. (2023). Cervical Cancer – Tumor Heterogeneity: Serial Functional and Molecular Imaging Across the Radiation Therapy Course in Advanced Cervical Cancer (Version 1) [Data set]. The Cancer Imaging Archive. https://doi.org/10.7937/ERZ5-QZ59
+
+## Acknowledgements
+The slicer scripting tutorial would not be possible without the following open source software:
+- [Slicer](https://github.com/Slicer/Slicer)
+- [Numpy](https://github.com/numpy/numpy)
+- [Matplotlib](https://github.com/matplotlib/matplotlib)
