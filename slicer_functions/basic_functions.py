@@ -1649,9 +1649,6 @@ def crop_inferior_to_slice(binaryMaskArray, sliceNumber, includeSlice=True):
     if not isinstance(includeSlice, bool):
         raise TypeError("The parameter includeSlice must be a bool")
     
-    # fix an exception here
-    ### if not 
-    
     try:
         binary_mask = np.copy(binaryMaskArray) #Make a copy of the mask array as we are working in place
         
@@ -2320,51 +2317,88 @@ def save_image_from_scalar_volume_node(outputFolder, scalarVolumeNode, outputFil
     saveStorageNode.WriteData(scalarVolumeNode)
 
 
-def save_rtstructs_as_nii(outputFolder, segmentationNode, segmentationsToSave):
+def save_segmentations_to_files(TupleOfSegmentNamesToSave, SegmentationNode, ReferenceVolumeNode, SaveDirectory, FileType, ExtraSaveInfo=None):
     """
-    Save the segmentation to the output folder as a .nii file.
-    
+    This function saves the specified segmentations to files. The function works on one Segmentation Node at a time.
+
     Parameters
     ----------
-    output_folder : str
-                The folder to save the .nii file to.
-    segmentationsToSave : tuple[str]
-                The segmentations to save.
-                
+    TupleOfSegmentNamesToSave : tuple
+                The tuple of segment names to save.
+    SegmentationNode : vtkMRMLSegmentationNode
+                The segmentation node to save the segmentations from.
+    ReferenceVolumeNode : vtkMRMLScalarVolumeNode
+                The reference volume node to save the segmentations to.
+    SaveDirectory : str
+                The directory to save the segmentations to.
+    FileType : str
+                The file type to save the segmentations as. The options are "nrrd", "nii.gz", and "nii".
+    ExtraSaveInfo : str, default: None
+                Additional information to add to the file name.
+
     Returns
     -------
-    None
-
-    raises
-    ------
-    TypeError
-        If the outputFolder is not a string.
-        If the segmentationNode is not a slicer.vtkMRMLSegmentationNode
-        If the segmentationsToSave is not a tuple.
-        If the segmentationsToSave contains an element that is not a string.
+    bool
+        True if the segmentations were saved successfully.
     """
 
-    if not isinstance(outputFolder, str):
-        raise TypeError("The outputFolder parameter must be a string.")
-    if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
-        raise TypeError("The segmentationNode parameter must be a slicer.vtkMRMLSegmentationNode")
-    if not isinstance(segmentationsToSave, tuple):
-        raise TypeError("The nodeTypesToSave parameter must be a tuple.")
-    if not all(isinstance(nodeType, str) for nodeType in segmentationsToSave):
-        raise TypeError("The nodeTypesToSave parameter must contain only strings.")
+    if not isinstance(TupleOfSegmentNamesToSave, tuple):
+        raise ValueError("TupleOfSegmentNamesToSave must be a tuple.")
+    if not isinstance(SegmentationNode, slicer.vtkMRMLSegmentationNode):
+        raise ValueError("SegmentationNode must be a vtkMRMLSegmentationNode.")
+    if not isinstance(ReferenceVolumeNode, slicer.vtkMRMLScalarVolumeNode):
+        raise ValueError("ReferenceVolumeNode must be a vtkMRMLScalarVolumeNode.")
+    if FileType not in ["nrrd", "nii.gz", "nii"]:
+        raise ValueError("FileType must be 'nrrd', 'nii.gz', or 'nii'.")
+    if not os.path.isdir(SaveDirectory):
+        raise ValueError("SaveDirectory must be a valid directory.")
+    if ExtraSaveInfo is not None:
+        if not isinstance(ExtraSaveInfo, str):
+            raise ValueError("ExtraSaveInfo must be a string.")
+
+    try:
+        logger.debug("Checking all of the available segments in the segmentation node.")
+        available_segments = tuple(SegmentationNode.GetSegmentation().GetNthSegment(i).GetName() for i in range(SegmentationNode.GetSegmentation().GetNumberOfSegments()))    
+
+        # Check to see if the segment names are in the provided segmentation nodes
+        if len(TupleOfSegmentNamesToSave) == 1:
+            if not TupleOfSegmentNamesToSave[0] in available_segments:
+                raise ValueError(f"The segment name {TupleOfSegmentNamesToSave[0]} is not in the SegmentationNode.")
+            else:
+                segment_IDs_to_save = [SegmentationNode.GetSegmentation().GetSegmentIdBySegmentName(TupleOfSegmentNamesToSave[0]), ]
+                logger.debug(f"Segment ID to save: {segment_IDs_to_save}")
+
+        else:
+            segment_IDs_to_save = []
+            for segment_name in TupleOfSegmentNamesToSave:
+                if not segment_name in available_segments:
+                    raise ValueError(f"The segment name {segment_name} is not in the SegmentationNode.")
+                else:
+                    segment_IDs_to_save.append(SegmentationNode.GetSegmentation().GetSegmentIdBySegmentName(segment_name))
+                    logger.debug(f"Segment IDs to save: {segment_IDs_to_save}")
+
+        #Create the label map volume node
+        logger.debug("Creating the label map volume node.")
+        label_map_volume_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"{SegmentationNode.GetName()}_label_map_node")
     
-    if not os.path.exists(outputFolder):
-        logger.debug(f"Creating the output folder {outputFolder}")
-        os.makedirs(outputFolder)
+        # Export the segments to the label map volume node
+        logger.debug("Exporting the segments to the label map volume node.")
+        slicer.vtkSlicerSegmentationsModuleLogic.ExportSegmentsToLabelmapNode(SegmentationNode, segment_IDs_to_save, label_map_volume_node, ReferenceVolumeNode)
 
-    # Create a vtkStringArray outside the loop
-    segmentIds = vtk.vtkStringArray()
+        # Save the label map volume node to a file
+        logger.debug("Saving the label map volume node to a file.")
+        if ExtraSaveInfo is None:
+            slicer.util.saveNode(label_map_volume_node, os.path.join(SaveDirectory, f"{label_map_volume_node.GetName().split('_label_map_node')[0]}.{FileType}"))
+        else:
+            slicer.util.saveNode(label_map_volume_node, os.path.join(SaveDirectory, f"{ExtraSaveInfo}_{label_map_volume_node.GetName().split('_label_map_node')[0]}.{FileType}"))
 
-    for segment in segmentationsToSave:
-        segmentation_id_to_save = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName(segment)
-        # Add each segment ID to the vtkStringArray
-        segmentIds.InsertNextValue(segmentation_id_to_save)
+        # Remove the label map volume node
+        logger.debug("Removing the label map volume node.")
+        slicer.mrmlScene.RemoveNode(label_map_volume_node)
 
-    # Call the export function once, after the loop
-    slicer.vtkSlicerSegmentationsModuleLogic.ExportSegmentsBinaryLabelmapRepresentationToFiles(outputFolder, segmentationNode, segmentIds, ".nii", False)
+        return True
+
+    except Exception:
+        logger.exception("An error occured in save_segmentations_to_files")
+        raise
 
