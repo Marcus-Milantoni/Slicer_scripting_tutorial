@@ -14,6 +14,260 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
+class medicalImage:
+    preset_colormaps = ['CT_BONE', 'CT_AIR', 'CT_BRAIN', 'CT_ABDOMEN', 'CT_LUNG', 'PET', 'DTI']
+    pet_colormaps = ['PET-Heat','PET-Rainbow2']
+
+    def __init__(self, name, volumeNode):
+        self.name = name
+        self.volumeNode = volumeNode
+        self.NumPyArray = slicer.util.arrayFromVolume(self.volumeNode)
+        self.shape = self.NumPyArray.shape
+        self.maxValue = np.max(self.NumPyArray)
+        self.minValue = np.min(self.NumPyArray)
+        self.spacing = self.volumeNode.GetSpacing()
+        self.origin = self.volumeNode.GetOrigin()
+        self.ID = self.volumeNode.GetID()
+        self.getName = self.volumeNode.GetName()
+
+
+    def description(self):
+        return f"Name: {self.name}, Shape: {self.shape}"
+
+
+    def updateSlicerView(self):
+        slicer.util.updateVolumeFromArray(self.volumeNode, self.NumPyArray)
+
+
+    def makeCopy(self, newName):
+        if not isinstance(newName, str):
+            raise TypeError("The newName parameter must be a string.")
+        
+        try:
+            logger.info(f"Making a copy of the volume node with name {newName}")
+            copiedNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', newName)
+            copiedNode.Copy(self.volumeNode)
+            return copiedNode
+
+        except Exception:
+            logger.exception("An error occurred in makeCopy")
+            raise
+
+
+    def setAsForeground(self, backgroundNode, opacity=0.75):
+        if not isinstance(backgroundNode, slicer.vtkMRMLScalarVolumeNode):
+            raise TypeError("The backgroundNode parameter must be a vtkMRMLScalarVolumeNode.")
+        if not isinstance(opacity, (int, float)):
+            raise TypeError("The opacity parameter must be an integer or a float.")
+        if not 0 <= opacity <= 1:
+            raise ValueError("The opacity parameter must be between 0 and 1.")
+
+        try:
+            logger.info(f"Setting the volume node as the foreground image with opacity {opacity}")
+            slicer.util.setSliceViewerLayers(background=backgroundNode, foreground=self.volumeNode, foregroundOpacity=opacity)
+
+        except Exception:
+            logger.exception("An error occurred in setAsForeground")
+            raise
+
+
+    def setCMAP(self, cmap):
+        if not isinstance(cmap, str):
+            raise TypeError("The cmap parameter must be a string.")
+        if not cmap in self.pet_colormaps or cmap in self.preset_colormaps:
+            raise ValueError("The cmap parameter must be a valid colormap.")
+
+        try:
+            logger.info(f"Setting the colormap to {cmap}")
+
+            if cmap in self.preset_colormaps:
+                slicer.modules.volumes.logic().ApplyVolumeDisplayPreset(self.volumeNode.GetVolumeDisplayNode(), cmap)
+
+            else:
+                ColorNode = slicer.mrmlScene.GetFirstNodeByName(cmap)
+                self.volumeNode.GetVolumeDisplayNode().SetAndObserveColorNodeID(ColorNode.GetID())
+                self.volume_node.GetVolumeDisplayNode().AutoWindowLevelOn()
+
+        except Exception:
+            logger.exception("An error occurred in setCMAP")
+            raise
+
+
+    def editName(self, newName):
+        if not isinstance(newName, str):
+            raise TypeError("The newName parameter must be a string.")
+
+        try:
+            logger.info(f"Editing the name of the volume node to {newName}")
+            self.volumeNode.SetName(newName)
+            self.name = newName
+
+        except Exception:
+            logger.exception("An error occurred in editName")
+            raise
+
+
+    def checkSegmentShapeMatch(self, segmentationArray):
+        if not isinstance(segmentationArray, np.ndarray):
+            raise TypeError("The segmentationArray parameter must be a numpy array.")
+
+        try:
+            logger.info(f"Checking if the shape of the segmentation array matches the volume node")
+            if segmentationArray.shape == self.shape:
+                return True
+            else:
+                return False
+
+        except Exception:
+            logger.exception("An error occurred in checkSegmentShapeMatch")
+            raise
+
+
+    def cropVolumeFromSegment(self, segmentationArray, updateSlicerView=True):
+        if not isinstance(segmentationArray, np.ndarray):
+            raise TypeError("The segmentationArray parameter must be a numpy array.")
+        if not segmentationArray.shape == self.shape:
+            raise ValueError("The segmentationArray parameter must have the same shape as the volume node.")
+
+        try:
+            logger.info(f"Cropping the volume node from the segmentation array")
+            self.NumPyArray = self.NumPyArray * segmentationArray
+            
+            if updateSlicerView:
+                self.updateSlicerView()
+
+        except Exception:
+            logger.exception("An error occurred in cropVolumeFromSegment")
+            raise
+
+    
+    def resampleScalarVolumeBRAINS(self, referenceVolumeNode, nodeName, interpolatorType='NearestNeighbor'):
+        """
+        Resamples a scalar volume node based on a reference volume node using the BRAINSResample module.
+
+        This function creates a new scalar volume node in the Slicer scene, resamples the input volume node
+        to match the geometry (e.g., dimensions, voxel size, orientation) of the reference volume node, and
+        assigns the specified node name to the newly created volume node if possible. If the specified node
+        name is already in use or not provided, a default name is assigned by Slicer.
+
+        Parameters
+        ----------
+        inputVolumeNode : vtkMRMLScalarVolumeNode
+            The input volume node to be resampled.
+        referenceVolumeNode : vtkMRMLScalarVolumeNode
+            The reference volume node whose geometry will be used for resampling.
+        NodeName : str
+            The name to be assigned to the newly created, resampled volume node.
+        interpolatorType : str, optional
+            The interpolator type to be used for resampling. The default is 'NearestNeighbor'. Other options include 'Linear', 'ResampleInPlace', 'BSpline', and 'WindowedSinc'.
+
+        Returns
+        -------
+        vtkMRMLScalarVolumeNode
+            The newly created and resampled volume node.
+
+        Raises
+        ------
+        ValueError
+            If the resampling process fails, an error is raised with the CLI execution failure message.
+        """
+        # Set parameters
+        if not isinstance(referenceVolumeNode, slicer.vtkMRMLScalarVolumeNode):
+            raise ValueError("Reference volume node must be a vtkMRMLScalarVolumeNode")
+        if not isinstance(nodeName, str):
+            raise ValueError("Node name must be a string")
+        if not isinstance(interpolatorType, str) or interpolatorType not in ['NearestNeighbor', 'Linear', 'ResampleInPlace', 'BSpline','WindowedSinc']:
+            raise ValueError("Interpolator type must be a string and one of 'NearestNeighbor', 'Linear', 'ResampleInPlace', 'BSpline', 'WindowedSinc'")
+
+        parameters = {}
+        parameters["inputVolume"] = self.volumeNode
+        try:
+            outputModelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', nodeName)
+        except:
+            outputModelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode')
+        parameters["outputVolume"] = outputModelNode
+        parameters["referenceVolume"] = referenceVolumeNode
+        parameters["interpolatorType"] = interpolatorType
+
+        # Execute
+        resampler = slicer.modules.brainsresample
+        cliNode = slicer.cli.runSync(resampler, None, parameters)
+        
+        # Process results
+        if cliNode.GetStatus() & cliNode.ErrorsMask:
+            # error
+            errorText = cliNode.GetErrorText()
+            slicer.mrmlScene.RemoveNode(cliNode)
+            raise ValueError("CLI execution failed: " + errorText)
+        
+        # success
+        slicer.mrmlScene.RemoveNode(cliNode)
+        return outputModelNode
+
+
+    def quickVisualize(self, cmap='gray', indicies=None):
+        """
+        Visualizes axial, coronal, and sagittal slices of a 3D image array.
+        
+        Parameters
+        ----------
+        cmap : str, default: 'gray'
+            The colormap to use for the visualization.
+        indices : dict, default: None
+            The indices of the slices to visualize. If None, slices at 1/4, 1/2, and 3/4 of the image dimensions are used.
+        
+        Raises
+        ------
+        TypeError
+            If imageArray is not a numpy ndarray.
+            If cmap is not a string.
+            If indices is not a dictionary.
+        ValueError
+            If imageArray is not 3D.
+            If cmap is not a valid matplotlib colormap.
+            If indices does not contain 'axial', 'coronal', and 'sagittal' keys with lists of 3 integers each.
+        """
+        if not isinstance(cmap, str):
+            raise TypeError("cmap must be a string.")
+        if indices is not None:
+            if not isinstance(indices, dict):
+                raise TypeError("indices must be a dictionary.")
+            if not all(key in indices for key in ['axial', 'coronal', 'sagittal']):
+                raise ValueError("indices must contain 'axial', 'coronal', and 'sagittal' keys.")
+            if not all(isinstance(indices[key], list) and len(indices[key]) == 3 for key in ['axial', 'coronal', 'sagittal']):
+                raise ValueError("Each key in indices must have a list of 3 integers.")
+
+        # Automatically select indices if not provided
+        if indices is None:
+            indices = {
+                'axial': [self.shape[0] // 4, self.shape[0] // 2, 3 * self.shape[0] // 4],
+                'coronal': [self.shape[1] // 4, self.shape[1] // 2, 3 * self.shape[1] // 4],
+                'sagittal': [self.shape[2] // 4, self.shape[2] // 2, 3 * self.shape[2] // 4],
+            }
+
+        plt.figure(figsize=(10, 10))
+
+        # Axial slices
+        for i, idx in enumerate(indices['axial'], 1):
+            plt.subplot(3, 3, i)
+            plt.imshow(self.NumPyArray[idx, :, :], cmap=cmap)
+            plt.title(f"Axial slice {idx}")
+
+        # Coronal slices
+        for i, idx in enumerate(indices['coronal'], 4):
+            plt.subplot(3, 3, i)
+            plt.imshow(self.NumPyArray[:, idx, :], cmap=cmap)
+            plt.title(f"Coronal slice {idx}")
+
+        # Sagittal slices
+        for i, idx in enumerate(indices['sagittal'], 7):
+            plt.subplot(3, 3, i)
+            plt.imshow(self.NumPyArray[:, :, idx], cmap=cmap)
+            plt.title(f"Sagittal slice {idx}")
+
+        plt.tight_layout()
+        plt.show()   
+
 
 #################################################################################
 # Basic functions for import and creation                                       #
