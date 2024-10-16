@@ -1,279 +1,84 @@
-# Created by Marcus Milantoni and Edward Wang from Western University/ Verspeeten Family Cancer Centre. This script contains basic functions for image processing in Slicer.
-
-import slicer, vtk
+# Utility functions
+from enum import Enum
+import slicer
 from DICOMLib import DICOMUtils
-import numpy as np
-import os
 import logging
-import matplotlib.pyplot as plt
+import os
+import numpy as np
+from image_volume import ImageVolume
 import ScreenCapture
+import matplotlib.pyplot as plt
 
-
-# Setup the logger (can customize)
+# Setup the logger
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-class medicalImage:
-    preset_colormaps = ['CT_BONE', 'CT_AIR', 'CT_BRAIN', 'CT_ABDOMEN', 'CT_LUNG', 'PET', 'DTI']
-    pet_colormaps = ['PET-Heat','PET-Rainbow2']
+####################################################################################################
+# Utility classes
+####################################################################################################
 
-    def __init__(self, name, volumeNode):
-        self.name = name
-        self.volumeNode = volumeNode
-        self.NumPyArray = slicer.util.arrayFromVolume(self.volumeNode)
-        self.shape = self.NumPyArray.shape
-        self.maxValue = np.max(self.NumPyArray)
-        self.minValue = np.min(self.NumPyArray)
-        self.spacing = self.volumeNode.GetSpacing()
-        self.origin = self.volumeNode.GetOrigin()
-        self.ID = self.volumeNode.GetID()
-        self.getName = self.volumeNode.GetName()
+class TempNodeManager:
+    def __init__(self, node_class: str, node_name: str) -> None:
+        self.scene = slicer.mrmlScene
+        self.node_class = node_class
+        self.node_name = node_name
 
+    def __enter__(self) -> slicer.vtkMRMLNode:
+        self.node = self.scene.AddNewNodeByClass(self.node_class, self.node_name)
+        return self.node
 
-    def description(self):
-        return f"Name: {self.name}, Shape: {self.shape}"
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.scene.RemoveNode(self.node)
 
 
-    def updateSlicerView(self):
-        slicer.util.updateVolumeFromArray(self.volumeNode, self.NumPyArray)
+class PresetColormaps(Enum):
+    CT_BONE = 'CT_BONE'
+    CT_AIR = 'CT_AIR'
+    CT_BRAIN = 'CT_BRAIN'
+    CT_ABDOMEN = 'CT_ABDOMEN'
+    CT_LUNG = 'CT_LUNG'
+    PET = 'PET'
+    DTI = 'DTI'
 
 
-    def makeCopy(self, newName):
-        if not isinstance(newName, str):
-            raise TypeError("The newName parameter must be a string.")
-        
-        try:
-            logger.info(f"Making a copy of the volume node with name {newName}")
-            copiedNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', newName)
-            copiedNode.Copy(self.volumeNode)
-            return copiedNode
-
-        except Exception:
-            logger.exception("An error occurred in makeCopy")
-            raise
+class PetColormaps(Enum):
+    PET_HEAT = 'PET-Heat'
+    PET_RAINBOW2 = 'PET-Rainbow2'
+    LABELS = 'Labels'
+    FULL_RAINBOW = 'Full-Rainbow'
+    GREY = 'Grey'
+    RAINBOW = 'Rainbow'
+    INVERTED_GREY = 'Inverted-Grey'
+    FMRI = 'fMRI'
 
 
-    def setAsForeground(self, backgroundNode, opacity=0.75):
-        if not isinstance(backgroundNode, slicer.vtkMRMLScalarVolumeNode):
-            raise TypeError("The backgroundNode parameter must be a vtkMRMLScalarVolumeNode.")
-        if not isinstance(opacity, (int, float)):
-            raise TypeError("The opacity parameter must be an integer or a float.")
-        if not 0 <= opacity <= 1:
-            raise ValueError("The opacity parameter must be between 0 and 1.")
-
-        try:
-            logger.info(f"Setting the volume node as the foreground image with opacity {opacity}")
-            slicer.util.setSliceViewerLayers(background=backgroundNode, foreground=self.volumeNode, foregroundOpacity=opacity)
-
-        except Exception:
-            logger.exception("An error occurred in setAsForeground")
-            raise
+class volumeNodeTypes(Enum):
+    CT = ['CT ', 'CT_']
+    PET = ['PET ', 'PET_', 'suvbw', 'standardized_uptake_value_body_weight']
+    MR = ['MR ', 'MR_']
+    US = ['US ', 'US_']
 
 
-    def setCMAP(self, cmap):
-        if not isinstance(cmap, str):
-            raise TypeError("The cmap parameter must be a string.")
-        if not cmap in self.pet_colormaps or cmap in self.preset_colormaps:
-            raise ValueError("The cmap parameter must be a valid colormap.")
+####################################################################################################
+# Utility functions
+####################################################################################################
 
-        try:
-            logger.info(f"Setting the colormap to {cmap}")
-
-            if cmap in self.preset_colormaps:
-                slicer.modules.volumes.logic().ApplyVolumeDisplayPreset(self.volumeNode.GetVolumeDisplayNode(), cmap)
-
-            else:
-                ColorNode = slicer.mrmlScene.GetFirstNodeByName(cmap)
-                self.volumeNode.GetVolumeDisplayNode().SetAndObserveColorNodeID(ColorNode.GetID())
-                self.volume_node.GetVolumeDisplayNode().AutoWindowLevelOn()
-
-        except Exception:
-            logger.exception("An error occurred in setCMAP")
-            raise
+def check_type(variable, expected_type, variable_name: str):
+    if not isinstance(variable, expected_type):
+        raise TypeError(f"The {variable_name} parameter must be a {expected_type.__name__}.")
 
 
-    def editName(self, newName):
-        if not isinstance(newName, str):
-            raise TypeError("The newName parameter must be a string.")
-
-        try:
-            logger.info(f"Editing the name of the volume node to {newName}")
-            self.volumeNode.SetName(newName)
-            self.name = newName
-
-        except Exception:
-            logger.exception("An error occurred in editName")
-            raise
+def log_and_raise(logger, error_message, exception_type=Exception):
+    logger.exception(error_message)
+    raise exception_type(error_message)
 
 
-    def checkSegmentShapeMatch(self, segmentationArray):
-        if not isinstance(segmentationArray, np.ndarray):
-            raise TypeError("The segmentationArray parameter must be a numpy array.")
+####################################################################################################
+# Functions for loading data
+####################################################################################################
 
-        try:
-            logger.info(f"Checking if the shape of the segmentation array matches the volume node")
-            if segmentationArray.shape == self.shape:
-                return True
-            else:
-                return False
-
-        except Exception:
-            logger.exception("An error occurred in checkSegmentShapeMatch")
-            raise
-
-
-    def cropVolumeFromSegment(self, segmentationArray, updateSlicerView=True):
-        if not isinstance(segmentationArray, np.ndarray):
-            raise TypeError("The segmentationArray parameter must be a numpy array.")
-        if not segmentationArray.shape == self.shape:
-            raise ValueError("The segmentationArray parameter must have the same shape as the volume node.")
-
-        try:
-            logger.info(f"Cropping the volume node from the segmentation array")
-            self.NumPyArray = self.NumPyArray * segmentationArray
-            
-            if updateSlicerView:
-                self.updateSlicerView()
-
-        except Exception:
-            logger.exception("An error occurred in cropVolumeFromSegment")
-            raise
-
-    
-    def resampleScalarVolumeBRAINS(self, referenceVolumeNode, nodeName, interpolatorType='NearestNeighbor'):
-        """
-        Resamples a scalar volume node based on a reference volume node using the BRAINSResample module.
-
-        This function creates a new scalar volume node in the Slicer scene, resamples the input volume node
-        to match the geometry (e.g., dimensions, voxel size, orientation) of the reference volume node, and
-        assigns the specified node name to the newly created volume node if possible. If the specified node
-        name is already in use or not provided, a default name is assigned by Slicer.
-
-        Parameters
-        ----------
-        inputVolumeNode : vtkMRMLScalarVolumeNode
-            The input volume node to be resampled.
-        referenceVolumeNode : vtkMRMLScalarVolumeNode
-            The reference volume node whose geometry will be used for resampling.
-        NodeName : str
-            The name to be assigned to the newly created, resampled volume node.
-        interpolatorType : str, optional
-            The interpolator type to be used for resampling. The default is 'NearestNeighbor'. Other options include 'Linear', 'ResampleInPlace', 'BSpline', and 'WindowedSinc'.
-
-        Returns
-        -------
-        vtkMRMLScalarVolumeNode
-            The newly created and resampled volume node.
-
-        Raises
-        ------
-        ValueError
-            If the resampling process fails, an error is raised with the CLI execution failure message.
-        """
-        # Set parameters
-        if not isinstance(referenceVolumeNode, slicer.vtkMRMLScalarVolumeNode):
-            raise ValueError("Reference volume node must be a vtkMRMLScalarVolumeNode")
-        if not isinstance(nodeName, str):
-            raise ValueError("Node name must be a string")
-        if not isinstance(interpolatorType, str) or interpolatorType not in ['NearestNeighbor', 'Linear', 'ResampleInPlace', 'BSpline','WindowedSinc']:
-            raise ValueError("Interpolator type must be a string and one of 'NearestNeighbor', 'Linear', 'ResampleInPlace', 'BSpline', 'WindowedSinc'")
-
-        parameters = {}
-        parameters["inputVolume"] = self.volumeNode
-        try:
-            outputModelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', nodeName)
-        except:
-            outputModelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode')
-        parameters["outputVolume"] = outputModelNode
-        parameters["referenceVolume"] = referenceVolumeNode
-        parameters["interpolatorType"] = interpolatorType
-
-        # Execute
-        resampler = slicer.modules.brainsresample
-        cliNode = slicer.cli.runSync(resampler, None, parameters)
-        
-        # Process results
-        if cliNode.GetStatus() & cliNode.ErrorsMask:
-            # error
-            errorText = cliNode.GetErrorText()
-            slicer.mrmlScene.RemoveNode(cliNode)
-            raise ValueError("CLI execution failed: " + errorText)
-        
-        # success
-        slicer.mrmlScene.RemoveNode(cliNode)
-        return outputModelNode
-
-
-    def quickVisualize(self, cmap='gray', indicies=None):
-        """
-        Visualizes axial, coronal, and sagittal slices of a 3D image array.
-        
-        Parameters
-        ----------
-        cmap : str, default: 'gray'
-            The colormap to use for the visualization.
-        indices : dict, default: None
-            The indices of the slices to visualize. If None, slices at 1/4, 1/2, and 3/4 of the image dimensions are used.
-        
-        Raises
-        ------
-        TypeError
-            If imageArray is not a numpy ndarray.
-            If cmap is not a string.
-            If indices is not a dictionary.
-        ValueError
-            If imageArray is not 3D.
-            If cmap is not a valid matplotlib colormap.
-            If indices does not contain 'axial', 'coronal', and 'sagittal' keys with lists of 3 integers each.
-        """
-        if not isinstance(cmap, str):
-            raise TypeError("cmap must be a string.")
-        if indices is not None:
-            if not isinstance(indices, dict):
-                raise TypeError("indices must be a dictionary.")
-            if not all(key in indices for key in ['axial', 'coronal', 'sagittal']):
-                raise ValueError("indices must contain 'axial', 'coronal', and 'sagittal' keys.")
-            if not all(isinstance(indices[key], list) and len(indices[key]) == 3 for key in ['axial', 'coronal', 'sagittal']):
-                raise ValueError("Each key in indices must have a list of 3 integers.")
-
-        # Automatically select indices if not provided
-        if indices is None:
-            indices = {
-                'axial': [self.shape[0] // 4, self.shape[0] // 2, 3 * self.shape[0] // 4],
-                'coronal': [self.shape[1] // 4, self.shape[1] // 2, 3 * self.shape[1] // 4],
-                'sagittal': [self.shape[2] // 4, self.shape[2] // 2, 3 * self.shape[2] // 4],
-            }
-
-        plt.figure(figsize=(10, 10))
-
-        # Axial slices
-        for i, idx in enumerate(indices['axial'], 1):
-            plt.subplot(3, 3, i)
-            plt.imshow(self.NumPyArray[idx, :, :], cmap=cmap)
-            plt.title(f"Axial slice {idx}")
-
-        # Coronal slices
-        for i, idx in enumerate(indices['coronal'], 4):
-            plt.subplot(3, 3, i)
-            plt.imshow(self.NumPyArray[:, idx, :], cmap=cmap)
-            plt.title(f"Coronal slice {idx}")
-
-        # Sagittal slices
-        for i, idx in enumerate(indices['sagittal'], 7):
-            plt.subplot(3, 3, i)
-            plt.imshow(self.NumPyArray[:, :, idx], cmap=cmap)
-            plt.title(f"Sagittal slice {idx}")
-
-        plt.tight_layout()
-        plt.show()   
-
-
-#################################################################################
-# Basic functions for import and creation                                       #
-#################################################################################
-
-def load_DICOM(dicomDataDir):
+def load_DICOM(dicomDataDir) -> list:
     """
     This function loads DICOM data into Slicer. This function uses DICOMutils to handle the data types.
 
@@ -298,11 +103,9 @@ def load_DICOM(dicomDataDir):
         raise TypeError("The dicomDataDir parameter must be a string.")
     if not os.path.isdir(dicomDataDir):
         raise ValueError("The dicomDataDir parameter must be a valid directory.")
-
     try:
         logger.info(f"Loading DICOM data from directory: {dicomDataDir}")
         loadedNodeIDs = []  # this list will contain the list of all loaded node IDs
-
         with DICOMUtils.TemporaryDICOMDatabase() as db:
             logger.debug(f"Importing DICOM data from directory: {dicomDataDir}")
             DICOMUtils.importDicom(dicomDataDir, db)
@@ -310,13 +113,322 @@ def load_DICOM(dicomDataDir):
             for patientUID in patientUIDs:
                 logger.debug(f"Loading patient with UID: {patientUID}")
                 loadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))
-
         return loadedNodeIDs
-
     except Exception:
         logger.exception("An error occurred in load_DICOM")
         raise
 
+
+####################################################################################################
+# Functions for creating nodes
+####################################################################################################
+
+def create_volume_node(volumeArray, referenceNode, volumeName) -> ImageVolume:
+    """
+    This function creates a volume node from a numpy array. A reference node must be provided to create the volume node.
+
+    Parameters
+    ----------
+    volumeArray : numpy.ndarray
+                The numpy array to create the volume node from.
+    referenceNode : vtkMRMLScalarVolumeNode
+                The reference node to create the volume node from.
+    volumeName : str
+                The name of the volume node to create.
+    
+    Returns
+    -------
+    vtkMRMLScalarVolumeNode
+        The volume node created from the numpy array.
+
+    Raises
+    ------
+    TypeError
+        If the volumeArray is not a numpy array.
+        If the referenceNode is not a vtkMRMLScalarVolumeNode.
+        If the volumeName is not a string.
+    """
+    check_type(volumeArray, np.ndarray, 'volumeArray')
+    check_type(referenceNode, slicer.vtkMRMLScalarVolumeNode, 'referenceNode')
+    check_type(volumeName, str, 'volumeName')
+    try:
+        logger.info(f"Creating a new volume node.")
+        volumeNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', volumeName)
+        volumeNode.CopyOrientation(referenceNode)
+        volumeNode.SetSpacing(referenceNode.GetSpacing())
+        volumeNode.CreateDefaultDisplayNodes()
+        displayNode = volumeNode.GetDisplayNode()
+        displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeRainbow')
+        slicer.util.updateVolumeFromArray(volumeNode, volumeArray)
+        image_volume_instance = ImageVolume(volumeNode)
+        return image_volume_instance
+    except Exception as e:
+        log_and_raise(logger, "An error occurred in create_volume_node", type(e))
+
+
+def get_volume_nodes_by_type(volumeNodeType: volumeNodeTypes) -> dict:
+    try:
+        matching_nodes = {}
+        for volumeNode in slicer.util.getNodesByClass("vtkMRMLVolumeNode"):
+            volume_node_name = volumeNode.GetName()
+            if any(substring in volume_node_name for substring in volumeNodeType.value):
+                matching_nodes[volume_node_name] = volumeNode
+        if not matching_nodes:
+            raise ValueError("No volume nodes of the specified type were found.")
+        return matching_nodes
+    except Exception as e:
+        log_and_raise(logger, "An error occurred in get_volume_nodes_by_type", type(e))  
+
+
+####################################################################################################
+# functions for saving screen captures
+####################################################################################################
+
+def sweep_screen_capture(backgroundImageNode, savePath, saveName, tupleOfSegmentationNodesToShow=None, 
+                         view='axial', frameRate=None, startSweepOffset=None, endSweepOffset=None,
+                           foregroundImageNode=None, foregroundOpacity=None, numberOfImages= None, ):
+    """
+    This function captures a sweep of images from a volume node and saves them as a video to a specified location.
+
+    Parameters:
+    ------------
+    backgroundImageNode: vtkMRMLScalarVolumeNode
+        The volume node to capture the images from.
+    savePath: str
+        The path to save the images to.
+    saveName: str
+        The name to save the images as.
+    tupleOfSegmentationNodesToShow: tuple, optional
+        A tuple of vtkMRMLSegmentationNodes to show in the video. Default is None.
+    view: str, optional
+        The view to capture the images from. Default is 'axial'.
+    frameRate: int or float, optional
+        The frame rate of the video. Default is None.
+    startSweepOffset: int or float, optional
+        The offset to start the sweep from. Default is None.
+    endSweepOffset: int or float, optional
+        The offset to end the sweep at. Default is None.
+    foregroundImageNode: vtkMRMLScalarVolumeNode, optional
+        The volume node to overlay on the background image. Default is None.
+    foregroundOpacity: int or float, optional
+        The opacity of the foreground image. Default is None.
+    numberOfImages: int, optional
+        The number of images to capture. Default is None. 
+    
+    Returns:
+    ---------
+    None
+    """
+    check_type(backgroundImageNode, slicer.vtkMRMLScalarVolumeNode, 'backgroundImageNode')
+    check_type(savePath, str, 'savePath')
+    check_type(saveName, str, 'saveName')
+    if not isinstance(tupleOfSegmentationNodesToShow, tuple) or not tupleOfSegmentationNodesToShow:
+        raise TypeError("tupleOfSegmentationNodesToShow must be a tuple or None")
+    check_type(view, str, 'view')
+    if frameRate is not None and not isinstance(frameRate, (int, float)):
+        raise TypeError("frameRate must be an integer or a float or None.")
+    if startSweepOffset is not None and not isinstance(startSweepOffset, (int, float)):
+        raise TypeError("startSweepOffset must be an integer or a float or None.")
+    if endSweepOffset is not None and not isinstance(endSweepOffset, (int, float)):
+        raise TypeError("endSweepOffset must be an integer or a float or None.")
+    if foregroundImageNode is not None and not isinstance(foregroundImageNode, slicer.vtkMRMLScalarVolumeNode):
+        raise TypeError("ForegroundImageNode must be a vtkMRMLScalarVolumeNode or None")
+    if numberOfImages is not None and not isinstance(numberOfImages, int):
+        raise TypeError("numberOfImages must be an integer")
+    if foregroundOpacity is not None and not isinstance(foregroundOpacity, (int, float)):
+        raise TypeError("foregroundOpacity must be an integer or a float or None.")
+    if foregroundOpacity is not None and not 0 <= foregroundOpacity <= 1:
+        raise ValueError("foregroundOpacity must be between 0 and 1")
+    if not view.lower() in ['axial', 'sagittal', 'coronal']:
+        raise ValueError("view must be either 'axial', 'sagittal' or 'coronal'")
+    if not all(isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode) for segmentationNode in tupleOfSegmentationNodesToShow):
+        raise ValueError("All elements of tupleOfSegmentationNodesToShow must be vtkMRMLSegmentationNodes")
+    if frameRate is not None and not 0 <= frameRate <= 60:
+        raise ValueError("frameRate must be between 0 and 60 frames per second")
+    # Create the save path if it does not exist
+    if not os.path.exists(savePath):
+        os.makedirs(savePath)
+    # Set the index for the desired view
+    logger.debug(f"Setting the view to {view}")
+    if view.lower() == 'axial':
+        index = 2
+        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeRed")
+    elif view.lower() == 'sagittal':
+        index = 0
+        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeYellow")
+    elif view.lower() == 'coronal':
+        index = 1
+        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeGreen")
+    # set the start and end sweep offsets if none are provided
+    if not startSweepOffset:
+        logger.debug("No start sweep offset provided, setting it to the start of the volume")
+        if index == 2:
+            startSweepOffset = round(backgroundImageNode.GetOrigin()[index], 2)
+        else:
+            startSweepOffset = round(backgroundImageNode.GetOrigin()[index] - backgroundImageNode.GetSpacing()[index] * (backgroundImageNode.GetImageData().GetDimensions()[index]-1), 2) 
+    if not endSweepOffset:
+        logger.debug("No end sweep offset provided, setting it to the end of the volume")
+        if index == 2:
+            endSweepOffset = round(backgroundImageNode.GetOrigin()[index] + backgroundImageNode.GetSpacing()[index] * (backgroundImageNode.GetImageData().GetDimensions()[index]-1), 2)
+        else:
+            round(backgroundImageNode.GetOrigin()[index], 2)
+    if not numberOfImages:
+        logger.debug("No number of images provided, setting it to the number of slices in the volume")
+        numberOfImages = backgroundImageNode.GetImageData().GetDimensions()[index] - 1 # Set the number of images to the number of slices in the volume
+    if not frameRate:
+        logger.debug("No frame rate provided, setting it to 6 frames per second")
+        frameRate = 4 # Set the frame rate to 6 frames per second
+    # Set the foreground opacity to 50% if none is provided and there is a foreground image
+    if foregroundImageNode and not foregroundOpacity:
+        logger.debug("Foreground image provided but no opacity, setting opacity to 50%")
+        foregroundOpacity = 0.5
+    # Set the display to what is desired for the video
+    logger.debug(f"Setting the display for the {view} view")
+    slicer.util.setSliceViewerLayers(background=backgroundImageNode, foreground=foregroundImageNode, foregroundOpacity=foregroundOpacity)
+    for currentSegmentationNode in slicer.util.getNodesByClass("vtkMRMLSegmentationNode"): # Hide all segmentations
+        currentSegmentationNode.GetDisplayNode().SetVisibility(False)
+    if tupleOfSegmentationNodesToShow:
+        for currentSegmentationNode in tupleOfSegmentationNodesToShow: # Show the desired segmentations
+            currentSegmentationNode.GetDisplayNode().SetVisibility(True)
+    # Capture the individual images
+    logger.debug(f"Capturing {numberOfImages} images from {startSweepOffset} to {endSweepOffset} in the {view} view")
+    ScreenCapture.ScreenCaptureLogic().captureSliceSweep(sliceNode, startSweepOffset, endSweepOffset, numberOfImages, savePath, f"{saveName}_%05d.png")
+    # create the video freom the images
+    logger.debug(f"Creating video from images at {savePath}/{saveName}.mp4")
+    ScreenCapture.ScreenCaptureLogic().createVideo(frameRate, "-codec libx264 -preset slower -pix_fmt yuv420p", savePath, f"{saveName}_%05d.png", f"{saveName}.mp4")
+    # Delete the temporairly saved images after the video is created
+    for imageIndex in range(numberOfImages):
+       logger.debug(f"Deleting {savePath}/{saveName}_{imageIndex:05d}.png")
+       os.remove(os.path.join(savePath, f"{saveName}_{imageIndex:05d}.png"))
+
+
+
+
+
+
+
+
+
+
+
+
+#################################################################################
+# Checks and finds                                                              #
+#################################################################################
+
+def check_intersection_binary_mask(array1, array2, numVoxelsThreshold=1):
+    """
+    Checks if two binary masks intersect.
+
+    Parameters
+    ----------
+    array1 : numpy.ndarray
+             The first binary mask.
+    array2 : numpy.ndarray
+             The second binary mask.
+    numVoxelsThreshold : int, default: 1
+                           The number of voxels that must be intersecting for the function to return True.
+               
+    Returns
+    -------
+    bool
+        True if the masks intersect, False if they do not intersect.
+    
+    Raises
+    ------
+    TypeError
+        If the array1 is not a numpy array.
+        If the array2 is not a numpy array.
+        If the numVoxelsThreshold is not an integer.
+    ValueError
+        If the array1 and array2 do not have the same shape.
+        If the numVoxelsThreshold is not greater than 0 or less than the total number of voxels in the array.
+    """
+    if not isinstance(array1, np.ndarray):
+        raise TypeError("The array1 parameter must be a numpy array.")
+    if not isinstance(array2, np.ndarray):
+        raise TypeError("The array2 parameter must be a numpy array.")
+    if not isinstance(numVoxelsThreshold, int):
+        raise TypeError("The numVoxelsThreshold parameter must be an integer.")
+    if not array1.shape == array2.shape:
+        raise ValueError("The array1 and array2 parameters must have the same shape.")
+    if not numVoxelsThreshold > 0 and numVoxelsThreshold <= array1.size:
+        raise ValueError("The numVoxelsThreshold parameter must be greater than 0 and less than the total number of voxels in the array.")
+    try:
+        intersection = np.logical_and(array1, array2)
+        if np.sum(intersection) >= numVoxelsThreshold:
+            return True
+        else:
+            return False    
+    except Exception:
+        logger.exception("An error occurred in check_intersection_binary_mask")
+        raise
+
+
+def find_max_distance_in_2D(binaryMask):
+    """
+    Finds the maximum distance between two pixels in a 2D binary mask. If you want to find the max distance in a plane of a binary mask, 
+    
+    Parameters
+    ----------
+    binaryMask : numpy.ndarray
+                The binary mask to find the maximum distance in. Must be a 2D array.
+    
+    Returns
+    -------
+    float
+        The maximum distance between two pixels in the binary mask. Zero if no mask is found.
+
+    Raises
+    ------
+    TypeError
+        If the binaryMask is not a np.ndarray
+    """
+    if not isinstance(binaryMask, np.ndarray):
+        raise TypeError("The parameter binaryMask must be a np.ndarray")   
+    try:
+        # get the location of all the ones
+        coords = np.where(binaryMask == 1)
+        if not coords[0].size or not coords[1].size:
+            return 0  # Return 0 if no pixels are found
+        min_x, max_x = np.min(coords[0]), np.max(coords[0])
+        min_y, max_y = np.min(coords[1]), np.max(coords[1])
+        max_dist = np.sqrt((max_x - min_x) ** 2 + (max_y - min_y) ** 2)
+        return max_dist    
+    except Exception:
+        logger.exception("An error occurred in find_max_distance_in_2D")
+        raise
+
+
+def get_most_superior_slice(tupleOfMasks):
+    """
+    Finds the most superior slice in a tuple of binary masks.
+    
+    Parameters
+    ----------
+    tupleOfMasks : tuple[numpy.ndarray]
+                The tuple of binary masks to find the most superior slice in.
+    
+    Returns
+    -------
+    int
+        The most superior slice.
+    """
+    if not isinstance(tupleOfMasks, tuple):
+        raise TypeError("The tupleOfMasks parameter must be a tuple.")
+    most_superior = 0
+    for mask in tupleOfMasks:
+        if not isinstance(mask, np.ndarray):
+            raise TypeError(f"The tupleOfMasks parameter must contain only numpy.ndarrays. The index {index} is not a numpy array.")
+        for index, slice in enumerate(mask):
+            if 1 in slice and index > most_superior:
+                most_superior = index
+    return most_superior
+
+
+#################################################################################
+# Functions from old slicer code                                                #
+#################################################################################
 
 def get_segment_array(segmentID, segmentationNode=None, referenceVolumeNode=None):
     """
@@ -416,7 +528,6 @@ def create_volume_node(volumeArray, referenceNode, volumeName):
     except Exception:
         logger.exception("An error occurred in create_volume_node")
         raise
-
 
 def add_segmentation_array_to_node(segmentationArray, segmentationNode, segmentName, referenceVolumeNode, color=None):
     """
@@ -707,263 +818,6 @@ def dice_similarity(mask1, mask2):
         return 1.0  # Both masks are empty
 
     return 2.0 * intersection / sum_masks
-
-
-def sweep_screen_capture(backgroundImageNode, savePath, saveName, tupleOfSegmentationNodesToShow=None, view='axial', frameRate=None, startSweepOffset=None, endSweepOffset=None, foregroundImageNode=None, foregroundOpacity=None, numberOfImages= None, ):
-    """
-    This function captures a sweep of images from a volume node and saves them as a video to a specified location.
-
-    Parameters:
-    ------------
-    backgroundImageNode: vtkMRMLScalarVolumeNode
-        The volume node to capture the images from.
-    savePath: str
-        The path to save the images to.
-    saveName: str
-        The name to save the images as.
-    tupleOfSegmentationNodesToShow: tuple, optional
-        A tuple of vtkMRMLSegmentationNodes to show in the video. Default is None.
-    view: str, optional
-        The view to capture the images from. Default is 'axial'.
-    frameRate: int or float, optional
-        The frame rate of the video. Default is None.
-    startSweepOffset: int or float, optional
-        The offset to start the sweep from. Default is None.
-    endSweepOffset: int or float, optional
-        The offset to end the sweep at. Default is None.
-    foregroundImageNode: vtkMRMLScalarVolumeNode, optional
-        The volume node to overlay on the background image. Default is None.
-    foregroundOpacity: int or float, optional
-        The opacity of the foreground image. Default is None.
-    numberOfImages: int, optional
-        The number of images to capture. Default is None. 
-    
-    Returns:
-    ---------
-    None
-    """
-    if not isinstance(backgroundImageNode, slicer.vtkMRMLScalarVolumeNode):
-        raise TypeError("backgroundImageNode must be a vtkMRMLScalarVolumeNode")
-    if not isinstance(savePath, str):
-        raise TypeError("savePath must be a string")
-    if not isinstance(saveName, str):
-        raise TypeError("saveName must be a string")
-    if not isinstance(tupleOfSegmentationNodesToShow, tuple) or not tupleOfSegmentationNodesToShow:
-        raise TypeError("tupleOfSegmentationNodesToShow must be a tuple or None")
-    if not isinstance(view, str):
-        raise TypeError("view must be a string")
-    if frameRate is not None and not isinstance(frameRate, (int, float)):
-        raise TypeError("frameRate must be an integer or a float or None.")
-    if startSweepOffset is not None and not isinstance(startSweepOffset, (int, float)):
-        raise TypeError("startSweepOffset must be an integer or a float or None.")
-    if endSweepOffset is not None and not isinstance(endSweepOffset, (int, float)):
-        raise TypeError("endSweepOffset must be an integer or a float or None.")
-    if foregroundImageNode is not None and not isinstance(foregroundImageNode, slicer.vtkMRMLScalarVolumeNode):
-        raise TypeError("ForegroundImageNode must be a vtkMRMLScalarVolumeNode or None")
-    if numberOfImages is not None and not isinstance(numberOfImages, int):
-        raise TypeError("numberOfImages must be an integer")
-    if foregroundOpacity is not None and not isinstance(foregroundOpacity, (int, float)):
-        raise TypeError("foregroundOpacity must be an integer or a float or None.")
-
-    if foregroundOpacity is not None and not 0 <= foregroundOpacity <= 1:
-        raise ValueError("foregroundOpacity must be between 0 and 1")
-    if not view.lower() in ['axial', 'sagittal', 'coronal']:
-        raise ValueError("view must be either 'axial', 'sagittal' or 'coronal'")
-    if not all(isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode) for segmentationNode in tupleOfSegmentationNodesToShow):
-        raise ValueError("All elements of tupleOfSegmentationNodesToShow must be vtkMRMLSegmentationNodes")
-    if frameRate is not None and not 0 <= frameRate <= 60:
-        raise ValueError("frameRate must be between 0 and 60 frames per second")
-    
-    # Create the save path if it does not exist
-    if not os.path.exists(savePath):
-        os.makedirs(savePath)
-
-    # Set the index for the desired view
-    logger.debug(f"Setting the view to {view}")
-    if view.lower() == 'axial':
-        index = 2
-        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeRed")
-    elif view.lower() == 'sagittal':
-        index = 0
-        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeYellow")
-    elif view.lower() == 'coronal':
-        index = 1
-        sliceNode = slicer.util.getNode("vtkMRMLSliceNodeGreen")
-
-    # set the start and end sweep offsets if none are provided
-    if not startSweepOffset:
-        logger.debug("No start sweep offset provided, setting it to the start of the volume")
-        if index == 2:
-            startSweepOffset = round(backgroundImageNode.GetOrigin()[index], 2)
-        else:
-            startSweepOffset = round(backgroundImageNode.GetOrigin()[index] - backgroundImageNode.GetSpacing()[index] * (backgroundImageNode.GetImageData().GetDimensions()[index]-1), 2)
-    
-    if not endSweepOffset:
-        logger.debug("No end sweep offset provided, setting it to the end of the volume")
-        if index == 2:
-            endSweepOffset = round(backgroundImageNode.GetOrigin()[index] + backgroundImageNode.GetSpacing()[index] * (backgroundImageNode.GetImageData().GetDimensions()[index]-1), 2)
-        else:
-            round(backgroundImageNode.GetOrigin()[index], 2)
-
-    if not numberOfImages:
-        logger.debug("No number of images provided, setting it to the number of slices in the volume")
-        numberOfImages = backgroundImageNode.GetImageData().GetDimensions()[index] - 1 # Set the number of images to the number of slices in the volume
-
-    if not frameRate:
-        logger.debug("No frame rate provided, setting it to 6 frames per second")
-        frameRate = 4 # Set the frame rate to 6 frames per second
-
-    # Set the foreground opacity to 50% if none is provided and there is a foreground image
-    if foregroundImageNode and not foregroundOpacity:
-        logger.debug("Foreground image provided but no opacity, setting opacity to 50%")
-        foregroundOpacity = 0.5
-
-    # Set the display to what is desired for the video
-    logger.debug(f"Setting the display for the {view} view")
-    slicer.util.setSliceViewerLayers(background=backgroundImageNode, foreground=foregroundImageNode, foregroundOpacity=foregroundOpacity)
-    for currentSegmentationNode in slicer.util.getNodesByClass("vtkMRMLSegmentationNode"): # Hide all segmentations
-        currentSegmentationNode.GetDisplayNode().SetVisibility(False)
-    if tupleOfSegmentationNodesToShow:
-        for currentSegmentationNode in tupleOfSegmentationNodesToShow: # Show the desired segmentations
-            currentSegmentationNode.GetDisplayNode().SetVisibility(True)
-
-    # Capture the individual images
-    logger.debug(f"Capturing {numberOfImages} images from {startSweepOffset} to {endSweepOffset} in the {view} view")
-    ScreenCapture.ScreenCaptureLogic().captureSliceSweep(sliceNode, startSweepOffset, endSweepOffset, numberOfImages, savePath, f"{saveName}_%05d.png")
-
-    # create the video freom the images
-    logger.debug(f"Creating video from images at {savePath}/{saveName}.mp4")
-    ScreenCapture.ScreenCaptureLogic().createVideo(frameRate, "-codec libx264 -preset slower -pix_fmt yuv420p", savePath, f"{saveName}_%05d.png", f"{saveName}.mp4")
-
-    # Delete the temporairly saved images after the video is created
-    for imageIndex in range(numberOfImages):
-       logger.debug(f"Deleting {savePath}/{saveName}_{imageIndex:05d}.png")
-       os.remove(os.path.join(savePath, f"{saveName}_{imageIndex:05d}.png"))
-
-
-
-#################################################################################
-# Checks and finds                                                              #
-#################################################################################
-
-def check_intersection_binary_mask(array1, array2, numVoxelsThreshold=1):
-    """
-    Checks if two binary masks intersect.
-
-    Parameters
-    ----------
-    array1 : numpy.ndarray
-             The first binary mask.
-    array2 : numpy.ndarray
-             The second binary mask.
-    numVoxelsThreshold : int, default: 1
-                           The number of voxels that must be intersecting for the function to return True.
-               
-    Returns
-    -------
-    bool
-        True if the masks intersect, False if they do not intersect.
-    
-    Raises
-    ------
-    TypeError
-        If the array1 is not a numpy array.
-        If the array2 is not a numpy array.
-        If the numVoxelsThreshold is not an integer.
-    ValueError
-        If the array1 and array2 do not have the same shape.
-        If the numVoxelsThreshold is not greater than 0 or less than the total number of voxels in the array.
-    """
-    if not isinstance(array1, np.ndarray):
-        raise TypeError("The array1 parameter must be a numpy array.")
-    if not isinstance(array2, np.ndarray):
-        raise TypeError("The array2 parameter must be a numpy array.")
-    if not isinstance(numVoxelsThreshold, int):
-        raise TypeError("The numVoxelsThreshold parameter must be an integer.")
-    if not array1.shape == array2.shape:
-        raise ValueError("The array1 and array2 parameters must have the same shape.")
-    if not numVoxelsThreshold > 0 and numVoxelsThreshold <= array1.size:
-        raise ValueError("The numVoxelsThreshold parameter must be greater than 0 and less than the total number of voxels in the array.")
-
-    try:
-        intersection = np.logical_and(array1, array2)
-        if np.sum(intersection) >= numVoxelsThreshold:
-            return True
-        else:
-            return False
-    
-    except Exception:
-        logger.exception("An error occurred in check_intersection_binary_mask")
-        raise
-
-
-def find_max_distance_in_2D(binaryMask):
-    """
-    Finds the maximum distance between two pixels in a 2D binary mask. If you want to find the max distance in a plane of a binary mask, 
-    
-    Parameters
-    ----------
-    binaryMask : numpy.ndarray
-                The binary mask to find the maximum distance in. Must be a 2D array.
-    
-    Returns
-    -------
-    float
-        The maximum distance between two pixels in the binary mask. Zero if no mask is found.
-
-    Raises
-    ------
-    TypeError
-        If the binaryMask is not a np.ndarray
-    """
-    if not isinstance(binaryMask, np.ndarray):
-        raise TypeError("The parameter binaryMask must be a np.ndarray")
-    
-    try:
-        # get the location of all the ones
-        coords = np.where(binaryMask == 1)
-        if not coords[0].size or not coords[1].size:
-            return 0  # Return 0 if no pixels are found
-
-        min_x, max_x = np.min(coords[0]), np.max(coords[0])
-        min_y, max_y = np.min(coords[1]), np.max(coords[1])
-
-        max_dist = np.sqrt((max_x - min_x) ** 2 + (max_y - min_y) ** 2)
-
-        return max_dist
-    
-    except Exception:
-        logger.exception("An error occurred in find_max_distance_in_2D")
-        raise
-
-
-def get_most_superior_slice(tupleOfMasks):
-    """
-    Finds the most superior slice in a tuple of binary masks.
-    
-    Parameters
-    ----------
-    tupleOfMasks : tuple[numpy.ndarray]
-                The tuple of binary masks to find the most superior slice in.
-    
-    Returns
-    -------
-    int
-        The most superior slice.
-    """
-    if not isinstance(tupleOfMasks, tuple):
-        raise TypeError("The tupleOfMasks parameter must be a tuple.")
-
-    most_superior = 0
-    for mask in tupleOfMasks:
-        if not isinstance(mask, np.ndarray):
-            raise TypeError(f"The tupleOfMasks parameter must contain only numpy.ndarrays. The index {index} is not a numpy array.")
-        for index, slice in enumerate(mask):
-            if 1 in slice and index > most_superior:
-                most_superior = index
-
-    return most_superior
-
 
 
 #################################################################################
@@ -1341,7 +1195,6 @@ def islands_effect_segment_editor(segmentName, segmentationNode, volumeNode, edi
         logger.exception(e)
 
 
-
 #################################################################################
 # Array manipulation                                                            #
 #################################################################################
@@ -1462,70 +1315,6 @@ def bitwise_and_from_array(mask1, mask2, addSegmentationToNode=False, segmentati
         logger.debug(f"Adding the combined mask to the segmentation node {segmentationNode}")     
         add_segmentation_array_to_node(segmentationNode, combined_mask, segmentName, volumeNode)
     
-    return combined_mask
-
-
-def bitwise_or_from_array(mask1, mask2, addSegmentationToNode=False, segmentationNode=None, volumeNode=None, segmentName=None):
-    """
-    Combines two binary masks. This function uses numpy's bitwise_or function to combine the masks. The function can also add the combined mask to a segmentation node.
-
-    Parameters
-    ----------
-    mask1 : numpy.ndarray
-             The first binary mask.
-    mask2 : numpy.ndarray
-             The second binary mask.
-    addSegmentationToNode : bool, default: False
-                Specification to add the combined mask to a segmentation node.
-    segmentationNode : vtkMRMLSegmentationNode
-                The segmentation node to add the combined mask to.
-    volumeNode : vtkMRMLScalarVolumeNode
-                The volume node that the segmentation node is based on. 
-    segmentName : str
-                The name of the segment to add the combined mask to.
-               
-    Returns
-    -------
-    numpy.ndarray
-        The combined binary mask.
-    
-    Raises
-    ------
-    TypeError
-        If the mask1 is not a numpy array.
-        If the mask2 is not a numpy array.
-        If the segmentationNode is not a vtkMRMLSegmentationNode.
-        If the volumeNode is not a vtkMRMLScalarVolumeNode.
-        If the segmentName is not a string.
-    ValueError
-        If the mask1 and mask2 do not have the same shape
-    """
-    if not isinstance(mask1, np.ndarray):
-        raise TypeError("The mask1 parameter must be a numpy.ndarray.")
-    if not isinstance(mask2, np.ndarray):
-        raise TypeError("The mask2 parameter must be a numpy.ndarray.")
-    if not mask1.shape == mask2.shape:
-        raise ValueError("The mask1 and mask2 parameters must have the same shape.")
-    
-    try:
-        logger.info(f"Combining masks")
-        combined_mask = np.bitwise_or(mask1, mask2)
-
-    except Exception:
-        logger.exception("An error occurred in bitwise_or_from_array")
-        raise
-            
-    if addSegmentationToNode:
-        if not isinstance(segmentationNode, slicer.vtkMRMLSegmentationNode):
-            raise TypeError("The segmentationNode parameter must be a vtkMRMLSegmentationNode.")
-        if not isinstance(volumeNode, slicer.vtkMRMLScalarVolumeNode):
-            raise TypeError("The volumeNode parameter must be a vtkMRMLScalarVolumeNode.")
-        if not isinstance(segmentName, str):
-            raise TypeError("The segmentName parameter must be a string.")
-
-        logger.debug(f"Adding the combined mask to the segmentation node {segmentationNode}")
-        add_segmentation_array_to_node(segmentationNode, combined_mask, segmentName, volumeNode)
-
     return combined_mask
 
 
@@ -2224,7 +2013,6 @@ def crop_posterior_from_distance(binaryMaskArray, referenceMask, numberOfPixels,
         add_segmentation_array_to_node(segmentationNode, binaryMaskArray, volumeName, volumeNode)
 
     return binaryMaskArray
-
 
 
 #################################################################################
