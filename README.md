@@ -2,11 +2,12 @@
 
 
 # Slicer_scripting_tutorial
-A repository built for the slicer tutorial run by Marcus Milantoni and Edward Wang.
+A repository built for the slicer tutorial run by Marcus Milantoni and Edward Wang. This tutorial gives a demonstration of how to use python with scripting & using the [slicerutility package](https://github.com/Marcus-Milantoni/Slicer_Utility) created by the same authors.
 
 ## Table of Contents
 - [License](#License)
 - [Requirements](#Requirements)
+- [Installation](#Installation)
 - [Setup](#Setup)
 - [Tutorial](#Description)
 - [Example patients](#Examples)
@@ -19,7 +20,26 @@ The following repository is under MIT license. For more information, visit [LICE
 - numpy
 - matplotlib
 
-The full list can be found in [requirements.txt](/requirements.txt)
+## Installation
+**!!!! Please install this package in a Slicer python environment through 3D Slicer's python terminal !!!!**
+
+### Install slicerutil
+``` python
+import pip
+
+pip.main(['install', 'slicerutil'])
+```
+
+### Import the package
+After installing the package use the following to import:
+``` python
+import slicerutil as su
+```
+
+or if you want to use the package in function mode (without oop):
+``` python
+import slicerutil.basic_functions as bf
+```
 
 ## Setup
 
@@ -52,9 +72,8 @@ Please follow the steps provided bellow:
     ~~~
 3. install the packages with
     ~~~ python
-    pip.main(['install', 'requirements.txt'])
+    pip.main(['install', 'slicerutil'])
     ~~~
-    - Find the requirements in the [requirements.txt](/requirements.txt) file.
 
 ## Tutorial
 #### [cervical_cancer_tutorial](Tutorials/cervical_cancer_tutorial.ipynb)
